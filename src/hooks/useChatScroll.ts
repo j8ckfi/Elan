@@ -38,6 +38,9 @@ export interface ChatScroll {
   atBottom: boolean;
   scrollToLatest: () => void;
   onUserSend: () => void;
+  /** Stop auto-following the live edge (e.g. the reader expanded a trace to
+   *  read it — growth from new steps must not drag them to the bottom). */
+  disengageFollow: () => void;
 }
 
 export function useChatScroll(
@@ -255,6 +258,10 @@ export function useChatScroll(
     });
   }, [recomputeSpacer, followLiveEdge]);
 
+  const disengageFollow = useCallback(() => {
+    followingRef.current = false;
+  }, []);
+
   return {
     scrollRef,
     contentRef,
@@ -262,5 +269,6 @@ export function useChatScroll(
     atBottom,
     scrollToLatest,
     onUserSend,
+    disengageFollow,
   };
 }

@@ -2,7 +2,7 @@
 // The agent's progress (thinking, tool calls, narration) streams into a single
 // ThinkingSteps timeline; the final answer renders as a ChatMessage below it.
 
-import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useMemo, useState } from "react";
 import { IconCopy, IconCheck } from "@tabler/icons-react";
 import type {
   AssistantItem,
@@ -49,10 +49,14 @@ export function Conversation({
   items,
   streaming,
   onAnswer,
+  onExpandTrace,
 }: {
   items: ChatItem[];
   streaming: boolean;
   onAnswer: AnswerFn;
+  /** The reader expanded a work-trace to read it — stop following the live edge
+   *  so new steps don't drag them down. */
+  onExpandTrace?: () => void;
 }) {
   const lastAssistant = [...items]
     .reverse()
@@ -72,7 +76,12 @@ export function Conversation({
   return (
     <div className="mx-auto flex w-full max-w-[46rem] flex-col gap-4 px-6 py-8">
       {items.map((item) => (
-        <ItemView key={item.id} item={item} onAnswer={onAnswer} />
+        <ItemView
+          key={item.id}
+          item={item}
+          onAnswer={onAnswer}
+          onExpandTrace={onExpandTrace}
+        />
       ))}
       {showThinkingPill && <ThinkingIndicator className="self-start" />}
     </div>
@@ -84,15 +93,17 @@ export function Conversation({
 const ItemView = memo(function ItemView({
   item,
   onAnswer,
+  onExpandTrace,
 }: {
   item: ChatItem;
   onAnswer: AnswerFn;
+  onExpandTrace?: () => void;
 }) {
   switch (item.type) {
     case "user":
       return <UserView item={item} />;
     case "assistant":
-      return <AssistantView item={item} />;
+      return <AssistantView item={item} onExpandTrace={onExpandTrace} />;
     case "question":
       return <QuestionCard item={item} onAnswer={onAnswer} />;
     case "notice":
@@ -162,16 +173,22 @@ function UserView({ item }: { item: UserItem }) {
   );
 }
 
-function AssistantView({ item }: { item: AssistantItem }) {
+function AssistantView({
+  item,
+  onExpandTrace,
+}: {
+  item: AssistantItem;
+  onExpandTrace?: () => void;
+}) {
   return (
     <div className="flex w-full flex-col items-start gap-1.5 self-start">
       {hasTimelineSteps(item.steps) && (
         <AgentSteps
           steps={item.steps}
           streaming={item.streaming}
-          hasAnswer={!!item.answer}
           startedAt={item.startedAt}
           endedAt={item.endedAt}
+          onExpand={onExpandTrace}
         />
       )}
       {item.answer && (
@@ -207,31 +224,35 @@ function formatWorked(ms: number): string {
 function AgentSteps({
   steps,
   streaming,
-  hasAnswer,
   startedAt,
   endedAt,
+  onExpand,
 }: {
   steps: Step[];
   streaming: boolean;
-  hasAnswer: boolean;
   startedAt?: number;
   endedAt?: number;
+  onExpand?: () => void;
 }) {
-  // Collapsed at rest by default — a live run opens itself so progress is
-  // visible, then re-collapses when it finishes; hydrated history stays shut.
-  const [open, setOpen] = useState(streaming);
-  const wasStreaming = useRef(streaming);
-  useEffect(() => {
-    // Auto-collapse once the run finishes and an answer has landed.
-    if (wasStreaming.current && !streaming && hasAnswer) setOpen(false);
-    wasStreaming.current = streaming;
-  }, [streaming, hasAnswer]);
+  // Collapsed by default — even while streaming. An open timeline that grows a
+  // step at a time drags the reader down on every new trace; keeping it shut
+  // (the header shows the live "Working…" label) means nothing pulls them. The
+  // reader can expand it to read, and doing so disengages follow (onExpand) so
+  // subsequent steps still never yank them.
+  const [open, setOpen] = useState(false);
 
   const elapsed =
     startedAt != null && endedAt != null ? endedAt - startedAt : null;
 
   return (
-    <ThinkingSteps open={open} onOpenChange={setOpen} className="w-full max-w-[34rem]">
+    <ThinkingSteps
+      open={open}
+      onOpenChange={(next: boolean) => {
+        setOpen(next);
+        if (next) onExpand?.();
+      }}
+      className="w-full max-w-[34rem]"
+    >
       <ThinkingStepsHeader>
         {streaming ? (
           <ThinkingLabel />

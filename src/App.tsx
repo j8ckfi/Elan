@@ -590,6 +590,7 @@ function ChatSurface({
                     items={pi.items}
                     streaming={pi.streaming}
                     onAnswer={pi.answer}
+                    onExpandTrace={scroll.disengageFollow}
                   />
                 </div>
                 <div
