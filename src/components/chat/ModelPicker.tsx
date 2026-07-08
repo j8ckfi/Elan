@@ -115,29 +115,21 @@ export function ModelPicker({
             )}
           >
             {/* Search header — auto-focused on open. */}
-            <div className="flex items-center gap-2 border-b border-border/70 px-3">
+            <div className="flex items-center gap-2 border-b border-border/70 px-2.5">
               <IconSearch
-                size={15}
+                size={14}
                 className="shrink-0 text-muted-foreground/70"
               />
               <Combobox.Input
                 placeholder="Search models…"
-                className="h-10 min-w-0 flex-1 bg-transparent text-[13px] text-foreground outline-none placeholder:text-muted-foreground/60"
+                className="h-9 min-w-0 flex-1 bg-transparent text-[13px] text-foreground outline-none placeholder:text-muted-foreground/60"
               />
             </div>
 
-            <Combobox.Empty className="px-3 py-6 text-center text-[13px] text-muted-foreground">
-              No models found
-            </Combobox.Empty>
-
-            <Combobox.List className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-1.5">
+            <Combobox.List className="peer/models min-h-0 flex-1 overflow-y-auto overscroll-contain p-1">
               {(group: ModelGroup) => (
-                <Combobox.Group
-                  key={group.value}
-                  items={group.items}
-                  className="mb-1 last:mb-0"
-                >
-                  <Combobox.GroupLabel className="px-2.5 pt-2 pb-1 text-[10.5px] font-medium tracking-wide text-muted-foreground/70 uppercase">
+                <Combobox.Group key={group.value} items={group.items}>
+                  <Combobox.GroupLabel className="px-2 pt-2 pb-0.5 text-[10px] font-medium tracking-wide text-muted-foreground/60 uppercase first:pt-1">
                     {group.value}
                   </Combobox.GroupLabel>
                   <Combobox.Collection>
@@ -146,7 +138,7 @@ export function ModelPicker({
                         key={item.value}
                         value={item}
                         className={cn(
-                          "flex h-9 cursor-pointer items-center gap-2 px-2.5 text-[13px]",
+                          "flex h-7 cursor-pointer items-center gap-2 px-2 text-[13px]",
                           shape.item,
                           "text-muted-foreground outline-none select-none",
                           "transition-colors duration-75",
@@ -158,7 +150,7 @@ export function ModelPicker({
                           {item.label}
                         </span>
                         <Combobox.ItemIndicator>
-                          <IconCheck size={15} className="shrink-0" />
+                          <IconCheck size={14} className="shrink-0" />
                         </Combobox.ItemIndicator>
                       </Combobox.Item>
                     )}
@@ -166,6 +158,17 @@ export function ModelPicker({
                 </Combobox.Group>
               )}
             </Combobox.List>
+
+            {/* Base UI's <Combobox.Empty> counts groups, not leaves, so it
+                never fires with a grouped list. Instead: when every group is
+                filtered out the List renders no children (`:empty`), and this
+                sibling reveals via peer-empty. */}
+            <div
+              role="status"
+              className="hidden px-3 py-5 text-center text-[13px] text-muted-foreground peer-empty/models:block"
+            >
+              No models found
+            </div>
           </Combobox.Popup>
         </Combobox.Positioner>
       </Combobox.Portal>
