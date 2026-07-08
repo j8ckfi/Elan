@@ -1,4 +1,5 @@
 import {
+  Component,
   useCallback,
   useEffect,
   useMemo,
@@ -50,8 +51,14 @@ interface EngineActions {
   rename: (name: string) => void;
 }
 
-let keyCounter = 0;
-const nextKey = () => `s${++keyCounter}`;
+// Globally-unique process keys. NOT a module counter: HMR resets module state
+// to 0 while React keeps the existing tabs, so a counter would reissue a key
+// that collides with a live tab — two tabs then match activeKey and both render
+// (the stacked-panes bug). A UUID can never collide across an HMR reload.
+const nextKey = () =>
+  typeof crypto !== "undefined" && crypto.randomUUID
+    ? crypto.randomUUID()
+    : `s${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 
 // Warm pool: keep the active tab, every running (streaming) tab, and the last
 // few recently-viewed idle tabs alive; reap the rest (unmount → kill process).
@@ -286,23 +293,57 @@ function App() {
         />
         <SidebarInset className="flex h-screen min-w-0 flex-col bg-background text-foreground">
           {tabs.map((t) => (
-            <SessionEngine
-              key={t.key}
-              procKey={t.key}
-              spec={t.spec}
-              active={t.key === activeKey}
-              recents={recents}
-              fallbackThread={t.key === activeKey ? fallbackThread : undefined}
-              onReport={reportStatus}
-              registerActions={registerActions}
-              onActivity={refreshSessions}
-              onSelectProject={newSessionIn}
-            />
+            <EngineBoundary key={t.key} active={t.key === activeKey}>
+              <SessionEngine
+                procKey={t.key}
+                spec={t.spec}
+                active={t.key === activeKey}
+                recents={recents}
+                fallbackThread={t.key === activeKey ? fallbackThread : undefined}
+                onReport={reportStatus}
+                registerActions={registerActions}
+                onActivity={refreshSessions}
+                onSelectProject={newSessionIn}
+              />
+            </EngineBoundary>
           ))}
         </SidebarInset>
       </SidebarProvider>
     </IconProvider>
   );
+}
+
+// Isolates a single session: if its subtree throws (a malformed transcript, a
+// bad event), only that session shows a fallback — the sidebar and every other
+// session keep running. Durability over a shared white screen.
+class EngineBoundary extends Component<
+  { active: boolean; children: ReactNode },
+  { error: boolean }
+> {
+  state = { error: false };
+  static getDerivedStateFromError() {
+    return { error: true };
+  }
+  componentDidCatch(error: unknown) {
+    console.error("[SessionEngine] crashed:", error);
+  }
+  render() {
+    if (this.state.error) {
+      if (!this.props.active) return null;
+      return (
+        <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 p-8 text-center text-[13px] text-muted-foreground">
+          <p>This session hit an error and couldn't be shown.</p>
+          <button
+            onClick={() => this.setState({ error: false })}
+            className="rounded-md border border-border px-3 py-1.5 text-foreground transition-colors hover:bg-hover"
+          >
+            Try again
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
 }
 
 // ── Session engine ───────────────────────────────────────────────────────────

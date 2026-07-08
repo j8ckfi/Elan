@@ -97,14 +97,24 @@ export type LocalAction =
 export type ReducerInput = PiEvent | LocalAction;
 
 // ── content helpers ──────────────────────────────────────────────────────
-function extractText(content: AssistantContent[]): string {
-  return content
+// Message content may arrive as an array of blocks, a bare string (older/other
+// tools, hand-written session files), or be missing entirely. Normalize to a
+// block array so nothing downstream crashes on an unexpectedly-shaped session
+// file — durability: one malformed file must never white-screen the app.
+function normContent(content: unknown): AssistantContent[] {
+  if (Array.isArray(content)) return content as AssistantContent[];
+  if (typeof content === "string")
+    return content ? [{ type: "text", text: content } as AssistantContent] : [];
+  return [];
+}
+function extractText(content: unknown): string {
+  return normContent(content)
     .filter((c): c is Extract<AssistantContent, { type: "text" }> => c.type === "text")
     .map((c) => c.text)
     .join("");
 }
-function extractThinking(content: AssistantContent[]): string {
-  return content
+function extractThinking(content: unknown): string {
+  return normContent(content)
     .filter(
       (c): c is Extract<AssistantContent, { type: "thinking" }> =>
         c.type === "thinking",
@@ -112,8 +122,8 @@ function extractThinking(content: AssistantContent[]): string {
     .map((c) => c.thinking)
     .join("");
 }
-function hasToolCalls(content: AssistantContent[]): boolean {
-  return content.some((c) => c.type === "toolCall");
+function hasToolCalls(content: unknown): boolean {
+  return normContent(content).some((c) => c.type === "toolCall");
 }
 function textFromResult(result: ToolResult | undefined): string {
   if (!result?.content) return "";
@@ -243,7 +253,7 @@ export function buildItemsFromMessages(messages: AgentMessage[]): ChatItem[] {
       if (!current)
         current = { type: "assistant", id: `a${n++}`, steps: [], answer: "", streaming: false };
       const a = current;
-      const content = (msg as AssistantMessage).content ?? [];
+      const content = normContent((msg as AssistantMessage).content);
       const calls = hasToolCalls(content);
       if ((msg as AssistantMessage).stopReason === "error")
         a.error = (msg as AssistantMessage).errorMessage ?? "The model returned an error.";
