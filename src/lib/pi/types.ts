@@ -24,6 +24,12 @@ export interface Model {
   provider: string;
   baseUrl?: string;
   reasoning?: boolean;
+  /** Maps each pi thinking level to a provider/model-specific wire value.
+   *  A missing key uses the provider default (level supported); `null` marks
+   *  the level as unsupported. `xhigh` counts only when explicitly present.
+   *  This is what makes the thinking picker model-aware — see
+   *  {@link ./thinking.supportedThinkingLevels}. */
+  thinkingLevelMap?: Partial<Record<ThinkingLevel, string | null>>;
   input?: string[];
   contextWindow?: number;
   maxTokens?: number;
