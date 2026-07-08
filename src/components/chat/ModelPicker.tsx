@@ -109,7 +109,7 @@ export function ModelPicker({
         >
           <Combobox.Popup
             className={cn(
-              "flex max-h-[min(420px,var(--available-height))] w-[280px] flex-col overflow-hidden",
+              "flex max-h-[min(340px,var(--available-height))] w-[224px] flex-col overflow-hidden",
               shape.container,
               "border border-border bg-popover text-popover-foreground",
               "shadow-[0_16px_40px_-12px_rgba(0,0,0,0.35)]",
