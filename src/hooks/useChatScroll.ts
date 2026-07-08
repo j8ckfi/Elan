@@ -26,7 +26,10 @@ import {
 } from "react";
 
 const EDGE_THRESHOLD = 48;
-const CONTEXT_GAP = 64;
+// Gap from the viewport top to a freshly-sent user turn when it's seated. Small
+// on purpose: the new message should sit right at the top, not several lines
+// down (just enough breathing room from the header).
+const CONTEXT_GAP = 16;
 
 export interface ChatScroll {
   scrollRef: React.RefObject<HTMLDivElement | null>;
@@ -64,6 +67,18 @@ export function useChatScroll(
     const el = scrollRef.current;
     if (!el) return 0;
     return el.scrollHeight - el.scrollTop - el.clientHeight;
+  }, []);
+
+  // Recompute "am I at the bottom?" purely from position. Driven from EVERY
+  // signal that can change it — scrolls, content growth/shrink, spacer resize —
+  // not just scroll events. This is what keeps the jump-to-latest button honest:
+  // if content settles below the fold (or you scroll up), it reappears; if the
+  // view is genuinely at the bottom, it hides. A scroll-event-only model could
+  // leave it stuck hidden after a programmatic jump + layout change.
+  const updateAtBottom = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    setAtBottom(el.scrollHeight - el.scrollTop - el.clientHeight < EDGE_THRESHOLD);
   }, []);
 
   const setScrollTop = useCallback((top: number) => {
@@ -132,6 +147,7 @@ export function useChatScroll(
   useLayoutEffect(() => {
     recomputeSpacer();
     if (followingRef.current) followLiveEdge();
+    updateAtBottom();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [revision]);
 
@@ -152,12 +168,13 @@ export function useChatScroll(
         const ro = new ResizeObserver(() => {
           recomputeSpacer();
           if (streamingRef.current && followingRef.current) followLiveEdge();
+          updateAtBottom();
         });
         ro.observe(node);
         contentRoRef.current = ro;
       }
     },
-    [recomputeSpacer, followLiveEdge],
+    [recomputeSpacer, followLiveEdge, updateAtBottom],
   );
 
   // Track position; distinguish our programmatic scrolls from the reader's.
@@ -168,7 +185,7 @@ export function useChatScroll(
       const el2 = scrollRef.current;
       if (!el2) return;
       const delta = bottomDelta();
-      setAtBottom(delta < EDGE_THRESHOLD);
+      updateAtBottom();
       // Ignore the scroll we just performed; react only to the reader's.
       if (Math.abs(el2.scrollTop - programmaticTopRef.current) <= 2) return;
       // A reader scroll: follow only while essentially AT the bottom. Being
@@ -177,13 +194,16 @@ export function useChatScroll(
       followingRef.current = delta < 4;
     };
     el.addEventListener("scroll", onScroll, { passive: true });
-    const ro = new ResizeObserver(() => recomputeSpacer());
+    const ro = new ResizeObserver(() => {
+      recomputeSpacer();
+      updateAtBottom();
+    });
     ro.observe(el);
     return () => {
       el.removeEventListener("scroll", onScroll);
       ro.disconnect();
     };
-  }, [bottomDelta, recomputeSpacer]);
+  }, [bottomDelta, recomputeSpacer, updateAtBottom]);
 
   // Upward intent from any modality disengages following.
   useEffect(() => {
@@ -218,8 +238,13 @@ export function useChatScroll(
   const scrollToLatest = useCallback(() => {
     followingRef.current = true;
     setAtBottom(true);
-    requestAnimationFrame(followLiveEdge);
-  }, [followLiveEdge]);
+    requestAnimationFrame(() => {
+      followLiveEdge();
+      // Reconcile against reality — if the jump couldn't reach the bottom, the
+      // button stays visible rather than hiding on a false "at bottom".
+      requestAnimationFrame(updateAtBottom);
+    });
+  }, [followLiveEdge, updateAtBottom]);
 
   const onUserSend = useCallback(() => {
     followingRef.current = true;

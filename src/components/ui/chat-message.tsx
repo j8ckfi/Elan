@@ -40,8 +40,8 @@ const ChatMessage = forwardRef<HTMLDivElement, ChatMessageProps>(
     const isUser = from === "user";
     // Hover-reveal is unreachable on touch — keep the meta row visible there.
     const isTouch = useTouchPrimary();
-    // Timestamps are a user-message affordance; assistant replies show actions only.
-    const showTime = isUser && time != null;
+    // Both sides carry a "time sent" label in the hover meta row.
+    const showTime = time != null;
 
     return (
       <div

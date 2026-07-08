@@ -3,6 +3,7 @@
 // ThinkingSteps timeline; the final answer renders as a ChatMessage below it.
 
 import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { IconCopy, IconCheck } from "@tabler/icons-react";
 import type {
   AssistantItem,
   ChatItem,
@@ -99,11 +100,63 @@ const ItemView = memo(function ItemView({
   }
 });
 
+// "3:45 PM", or "Jul 7, 3:45 PM" when it isn't today.
+function formatTime(ms?: number): string | undefined {
+  if (!ms) return undefined;
+  const d = new Date(ms);
+  if (Number.isNaN(d.getTime())) return undefined;
+  const time = d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  const today = new Date().toDateString() === d.toDateString();
+  return today
+    ? time
+    : `${d.toLocaleDateString([], { month: "short", day: "numeric" })}, ${time}`;
+}
+
+// Icon-only copy control for the hover meta row; flips to a check briefly.
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      // Fallback for contexts where the async clipboard API is unavailable.
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      try {
+        document.execCommand("copy");
+      } catch {
+        /* give up silently */
+      }
+      document.body.removeChild(ta);
+    }
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1200);
+  };
+  return (
+    <button
+      onClick={copy}
+      aria-label={copied ? "Copied" : "Copy message"}
+      className="flex size-6 items-center justify-center rounded-md text-muted-foreground/70 transition-colors duration-100 hover:bg-hover hover:text-foreground active:scale-95"
+    >
+      {copied ? <IconCheck size={13} /> : <IconCopy size={13} />}
+    </button>
+  );
+}
+
 function UserView({ item }: { item: UserItem }) {
   // data-user-msg marks the anchor the scroll controller uses to seat a new
   // turn near the top of the viewport.
   return (
-    <ChatMessage from="user" data-user-msg="">
+    <ChatMessage
+      from="user"
+      data-user-msg=""
+      time={formatTime(item.createdAt)}
+      actions={<CopyButton text={item.text} />}
+    >
       {item.text}
     </ChatMessage>
   );
@@ -122,7 +175,12 @@ function AssistantView({ item }: { item: AssistantItem }) {
         />
       )}
       {item.answer && (
-        <ChatMessage from="assistant">
+        <ChatMessage
+          from="assistant"
+          // Show the reply's time + copy once it has settled (not mid-stream).
+          time={item.streaming ? undefined : formatTime(item.endedAt ?? item.startedAt)}
+          actions={item.streaming ? undefined : <CopyButton text={item.answer} />}
+        >
           <Markdown streaming={item.streaming}>{item.answer}</Markdown>
         </ChatMessage>
       )}

@@ -48,6 +48,8 @@ export interface UserItem {
   id: string;
   text: string;
   images?: number;
+  /** When the message was sent (epoch ms) — the hover "time sent" label. */
+  createdAt?: number;
 }
 export interface QuestionItem {
   type: "question";
@@ -245,7 +247,13 @@ export function buildItemsFromMessages(messages: AgentMessage[]): ChatItem[] {
       if (current) items.push(current);
       current = null;
       const text = userText(msg as UserMessage);
-      if (text.trim()) items.push({ type: "user", id: `u${n++}`, text });
+      if (text.trim())
+        items.push({
+          type: "user",
+          id: `u${n++}`,
+          text,
+          createdAt: (msg as UserMessage).timestamp,
+        });
       continue;
     }
 
@@ -253,6 +261,12 @@ export function buildItemsFromMessages(messages: AgentMessage[]): ChatItem[] {
       if (!current)
         current = { type: "assistant", id: `a${n++}`, steps: [], answer: "", streaming: false };
       const a = current;
+      // Timestamps span the run: earliest starts it, latest ends it.
+      const ts = (msg as AssistantMessage).timestamp;
+      if (ts != null) {
+        a.startedAt = a.startedAt ?? ts;
+        a.endedAt = ts;
+      }
       const content = normContent((msg as AssistantMessage).content);
       const calls = hasToolCalls(content);
       if ((msg as AssistantMessage).stopReason === "error")
@@ -335,7 +349,13 @@ export function reduce(state: SessionState, ev: ReducerInput): SessionState {
         currentThinkingStepId: null,
         items: [
           ...state.items,
-          { type: "user", id: `u${state.seq}`, text: ev.text, images: ev.images },
+          {
+            type: "user",
+            id: `u${state.seq}`,
+            text: ev.text,
+            images: ev.images,
+            createdAt: Date.now(),
+          },
         ],
       };
 
