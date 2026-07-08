@@ -41,7 +41,7 @@ recompiling Rust. Same frontend, two transports — see `src/lib/pi/client.ts`.
 ## Build & install
 
 ```sh
-bun run tauri build        # -> src-tauri/target/release/bundle/macos/mari.app (+ .dmg)
+bun run tauri build        # -> src-tauri/target/release/bundle/macos/Mari.app (+ .dmg)
 ```
 
 The app is **not notarized** (yet), so first launch needs the one-time

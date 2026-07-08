@@ -178,12 +178,16 @@ Dock not updating after a rebuild? It's the macOS icon cache: `killall Dock`.
 ```sh
 bun run tauri build
 # quit running app, replace the bundle, relaunch:
-osascript -e 'tell application "mari" to quit'
-rm -rf /Applications/mari.app
-cp -R src-tauri/target/release/bundle/macos/mari.app /Applications/mari.app
+osascript -e 'tell application "Mari" to quit'
+rm -rf /Applications/Mari.app
+cp -R "src-tauri/target/release/bundle/macos/Mari.app" /Applications/Mari.app
 killall Dock          # refresh the dock icon
-open /Applications/mari.app
+open /Applications/Mari.app
 ```
+
+> The bundle is `Mari.app` (productName is `Mari`); the identifier stays
+> `com.mari.desktop`. macOS's default filesystem is case-insensitive, so an
+> in-place updater swap over an older `mari.app` resolves to the same path.
 
 `tauri dev` runs a bare binary (no bundle), so the **dock icon only reflects a
 bundled build**, not dev.
