@@ -23,6 +23,7 @@ import { ComposerControls } from "@/components/chat/ComposerControls";
 import { SessionSidebar } from "@/components/chat/SessionSidebar";
 import { SettingsDialog } from "@/components/chat/SettingsDialog";
 import { useSettings } from "@/lib/settings";
+import { useUpdater } from "@/lib/updater";
 import { usePiSession, type PiSession } from "@/hooks/usePiSession";
 import { useChatScroll } from "@/hooks/useChatScroll";
 import {
@@ -347,6 +348,7 @@ function App() {
           onOpenSettings={() => setSettingsOpen(true)}
         />
         <SidebarInset className="flex h-screen min-w-0 flex-col bg-background text-foreground">
+          <UpdateBanner autoCheck={settings.autoCheckUpdates} />
           {tabs.map((t) => (
             <EngineBoundary key={t.key} active={t.key === activeKey}>
               <SessionEngine
@@ -719,6 +721,49 @@ function JumpToLatest({
     >
       <IconArrowDown size={16} />
     </button>
+  );
+}
+
+// Slim top bar shown only when a launch-time update check finds a newer version
+// (gated by the auto-check setting). Manual checks live in Settings → About.
+function UpdateBanner({ autoCheck }: { autoCheck: boolean }) {
+  const u = useUpdater();
+  const [dismissed, setDismissed] = useState(false);
+  const checkedRef = useRef(false);
+  useEffect(() => {
+    if (autoCheck && !checkedRef.current) {
+      checkedRef.current = true;
+      void u.check();
+    }
+  }, [autoCheck, u]);
+
+  if (dismissed || (u.phase !== "available" && u.phase !== "downloading"))
+    return null;
+
+  return (
+    <div className="flex h-8 shrink-0 items-center justify-center gap-3 border-b border-border bg-accent/10 px-4 text-[12px] text-foreground">
+      {u.phase === "downloading" ? (
+        <span className="text-muted-foreground">Downloading v{u.version}…</span>
+      ) : (
+        <>
+          <span>
+            Mari <span className="tabular-nums">v{u.version}</span> is available.
+          </span>
+          <button
+            onClick={u.install}
+            className="rounded-[5px] px-2 py-0.5 font-medium text-accent-foreground hover:bg-hover"
+          >
+            Install &amp; relaunch
+          </button>
+          <button
+            onClick={() => setDismissed(true)}
+            className="text-muted-foreground hover:text-foreground"
+          >
+            Later
+          </button>
+        </>
+      )}
+    </div>
   );
 }
 

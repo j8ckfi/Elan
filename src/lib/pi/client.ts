@@ -36,7 +36,7 @@ export interface PiTransport {
   onState(cb: (state: ConnState) => void): () => void;
 }
 
-function isTauri(): boolean {
+export function isTauri(): boolean {
   return (
     typeof window !== "undefined" &&
     ("__TAURI_INTERNALS__" in window || "__TAURI__" in window)

@@ -4,6 +4,7 @@
 
 import { type ReactNode } from "react";
 import { IconExternalLink } from "@tabler/icons-react";
+import { useUpdater } from "@/lib/updater";
 import {
   Dialog,
   DialogContent,
@@ -173,6 +174,12 @@ export function SettingsDialog({
                 onChange={(v) => update({ autoCheckUpdates: v })}
               />
             </Field>
+            <Field
+              label="Updates"
+              desc="Mari updates from signed GitHub Releases."
+            >
+              <UpdatesControl />
+            </Field>
             <div className="flex items-center justify-between">
               <div className="text-[13px] text-muted-foreground">
                 Mari <span className="tabular-nums">v{__APP_VERSION__}</span>
@@ -199,6 +206,48 @@ export function SettingsDialog({
         </div>
       </DialogContent>
     </Dialog>
+  );
+}
+
+// Compact "check for updates" control. No-ops (disabled) in browser dev where
+// the updater is unavailable.
+function UpdatesControl() {
+  const u = useUpdater();
+  const btn =
+    "rounded-[5px] border border-border px-2.5 py-1 text-[12px] transition-colors " +
+    "hover:bg-hover disabled:opacity-50 disabled:pointer-events-none";
+
+  if (u.phase === "unsupported") {
+    return (
+      <span className="text-[12px] text-muted-foreground">Desktop app only</span>
+    );
+  }
+  if (u.phase === "available") {
+    return (
+      <button className={cn(btn, "text-foreground")} onClick={u.install}>
+        Update to v{u.version} → install &amp; relaunch
+      </button>
+    );
+  }
+  if (u.phase === "downloading") {
+    return <span className="text-[12px] text-muted-foreground">Downloading v{u.version}…</span>;
+  }
+  return (
+    <div className="flex items-center gap-2">
+      <button
+        className={btn}
+        disabled={u.phase === "checking"}
+        onClick={u.check}
+      >
+        {u.phase === "checking" ? "Checking…" : "Check for updates"}
+      </button>
+      {u.phase === "uptodate" && (
+        <span className="text-[12px] text-muted-foreground">Up to date</span>
+      )}
+      {u.phase === "error" && (
+        <span className="text-[12px] text-destructive">Check failed</span>
+      )}
+    </div>
   );
 }
 

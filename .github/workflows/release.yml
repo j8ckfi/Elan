@@ -1,0 +1,46 @@
+name: Release
+
+# Cut a release by pushing a version tag:
+#   git tag vX.Y.Z && git push --tags
+# This builds a signed universal macOS bundle, publishes a GitHub Release, and
+# uploads latest.json (the updater manifest the app polls). Version in
+# package.json and src-tauri/tauri.conf.json must match the tag.
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  release:
+    permissions:
+      contents: write
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - run: bun install
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Set via `gh secret set` — sign the update so the app trusts it.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: "Mari ${{ github.ref_name }}"
+          releaseBody: "Download the `.dmg` to install. Auto-updates handle subsequent versions."
+          releaseDraft: false
+          prerelease: false
+          args: --target universal-apple-darwin
