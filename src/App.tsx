@@ -648,7 +648,7 @@ function TitleBar({ onNewChat }: { onNewChat: () => void }) {
 
   return (
     <div
-      data-tauri-drag-region
+      data-tauri-drag-region="deep"
       className="fixed left-0 top-0 z-50 flex h-8 items-center gap-0.5 pr-2 select-none"
       style={{ paddingLeft: trafficInset() }}
     >
@@ -684,8 +684,8 @@ function ContentHeader({ breadcrumb }: { breadcrumb: ReactNode }) {
 
   return (
     <header
-      data-tauri-drag-region
-      className="flex h-8 shrink-0 items-center gap-2 pr-3 select-none"
+      data-tauri-drag-region="deep"
+      className="relative z-30 flex h-8 shrink-0 items-center gap-2 pr-3 select-none"
       style={{ paddingLeft: pl }}
     >
       <div className="min-w-0 flex-1">{breadcrumb}</div>
