@@ -9,10 +9,12 @@ import {
   IconPlus,
   IconEdit,
   IconPencil,
+  IconTrash,
   IconCheck,
   IconX,
   IconChevronRight,
 } from "@tabler/icons-react";
+import { ContextMenu } from "@base-ui/react/context-menu";
 import {
   Sidebar,
   SidebarContent,
@@ -82,7 +84,10 @@ export interface SessionSidebarProps {
   /** New session preset to a specific workspace (the hovered project's cwd). */
   onNewInProject: (cwd: string) => void;
   onSwitch: (path: string) => void;
-  onRename: (name: string) => void;
+  /** Rename a session by disk path (works for any session, open or not). */
+  onRename: (path: string, name: string) => void;
+  /** Delete a session by disk path. */
+  onDelete: (path: string) => void;
   /** Drag-to-resize: report the new sidebar width (px) during a drag. */
   onResize: (width: number) => void;
 }
@@ -95,6 +100,7 @@ export function SessionSidebar({
   onNewInProject,
   onSwitch,
   onRename,
+  onDelete,
   onResize,
 }: SessionSidebarProps) {
   const projects = useMemo<Project[]>(() => {
@@ -218,6 +224,7 @@ export function SessionSidebar({
               runningPaths={runningPaths}
               onSwitch={onSwitch}
               onRename={onRename}
+              onDelete={onDelete}
               onNewInProject={onNewInProject}
               dragging={dragCwd === project.cwd}
               dropPos={drop?.cwd === project.cwd ? drop.pos : null}
@@ -283,6 +290,7 @@ function ProjectGroup({
   runningPaths,
   onSwitch,
   onRename,
+  onDelete,
   onNewInProject,
   dragging,
   dropPos,
@@ -297,7 +305,8 @@ function ProjectGroup({
   activePath?: string;
   runningPaths?: Set<string>;
   onSwitch: (path: string) => void;
-  onRename: (name: string) => void;
+  onRename: (path: string, name: string) => void;
+  onDelete: (path: string) => void;
   onNewInProject: (cwd: string) => void;
   dragging: boolean;
   dropPos: "before" | "after" | null;
@@ -401,6 +410,7 @@ function ProjectGroup({
               running={!!runningPaths?.has(s.path)}
               onSwitch={onSwitch}
               onRename={onRename}
+              onDelete={onDelete}
             />
           ))}
           {project.sessions.length > CAP && !forceAll && (
@@ -423,19 +433,26 @@ function SessionRow({
   running,
   onSwitch,
   onRename,
+  onDelete,
 }: {
   session: SessionSummary;
   active: boolean;
   running: boolean;
   onSwitch: (path: string) => void;
-  onRename: (name: string) => void;
+  onRename: (path: string, name: string) => void;
+  onDelete: (path: string) => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(session.name ?? session.title);
 
+  const startRename = () => {
+    setDraft(session.name ?? session.title);
+    setEditing(true);
+  };
+
   const commit = () => {
     const v = draft.trim();
-    if (v && v !== (session.name ?? session.title)) onRename(v);
+    if (v && v !== (session.name ?? session.title)) onRename(session.path, v);
     setEditing(false);
   };
 
@@ -476,47 +493,87 @@ function SessionRow({
   }
 
   return (
-    <SidebarMenuItem>
-      <SidebarMenuButton
-        isActive={active}
-        onClick={() => onSwitch(session.path)}
-        title={session.title}
-        // The active row renders the (hover-only) rename pencil, which makes the
-        // menu-button reserve pr-8 and truncate the title early even while the
-        // pencil is hidden. Cancel that reserve — the pencil just overlays the
-        // title's end on hover (where it's already truncated).
-        className={cn("h-7", active && "pr-2!")}
+    <ContextMenu.Root>
+      {/* Trigger renders the <li> itself so ul>li stays valid and the
+          group/menu-item selectors the button + action rely on still work. */}
+      <ContextMenu.Trigger
+        render={
+          <li
+            className="group/menu-item relative"
+            data-slot="sidebar-menu-item"
+            data-sidebar="menu-item"
+          />
+        }
       >
-        {/* While its agent runs, the title itself shimmers — no extra glyph. */}
-        <span
-          className={cn(
-            "min-w-0 flex-1 truncate text-[13px]",
-            running && "shimmer-run",
-          )}
+        <SidebarMenuButton
+          isActive={active}
+          onClick={() => onSwitch(session.path)}
+          title={session.title}
+          // The active row renders the (hover-only) rename pencil, which makes
+          // the menu-button reserve pr-8 and truncate the title early even while
+          // the pencil is hidden. Cancel that reserve — the pencil just overlays
+          // the title's end on hover (where it's already truncated).
+          className={cn("h-7", active && "pr-2!")}
         >
-          {session.title}
-        </span>
-        {/* Recency label — hidden on the active row so the rename pencil (which
-            occupies the same corner on hover) has room. */}
-        {!active && (
-          <span className="shrink-0 text-[11px] tabular-nums text-sidebar-foreground/30">
-            {relativeTime(session.updatedAt)}
+          {/* While its agent runs, the title itself shimmers — no extra glyph. */}
+          <span
+            className={cn(
+              "min-w-0 flex-1 truncate text-[13px]",
+              running && "shimmer-run",
+            )}
+          >
+            {session.title}
           </span>
+          {/* Recency label — hidden on the active row so the rename pencil
+              (which occupies the same corner on hover) has room. */}
+          {!active && (
+            <span className="shrink-0 text-[11px] tabular-nums text-sidebar-foreground/30">
+              {relativeTime(session.updatedAt)}
+            </span>
+          )}
+        </SidebarMenuButton>
+        {/* Quick rename affordance on the active row (right-click has it too). */}
+        {active && (
+          <SidebarMenuAction
+            showOnHover
+            aria-label="Rename session"
+            onClick={startRename}
+          >
+            <IconPencil size={14} />
+          </SidebarMenuAction>
         )}
-      </SidebarMenuButton>
-      {/* Rename only the session you're in (set_session_name targets active). */}
-      {active && (
-        <SidebarMenuAction
-          showOnHover
-          aria-label="Rename session"
-          onClick={() => {
-            setDraft(session.name ?? session.title);
-            setEditing(true);
-          }}
-        >
-          <IconPencil size={14} />
-        </SidebarMenuAction>
-      )}
-    </SidebarMenuItem>
+      </ContextMenu.Trigger>
+
+      <ContextMenu.Portal>
+        <ContextMenu.Positioner className="z-50 outline-none">
+          <ContextMenu.Popup
+            className={cn(
+              "z-50 min-w-[9rem] origin-[var(--transform-origin)] overflow-hidden p-1",
+              "rounded-xl border border-border bg-popover text-[13px] text-popover-foreground shadow-lg",
+              "dark:border-transparent dark:shadow-surface-2",
+              "data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95",
+              "data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95 data-closed:duration-100",
+            )}
+          >
+            <ContextMenu.Item
+              onClick={startRename}
+              className="flex cursor-default items-center gap-2 rounded-md px-2 py-1.5 outline-none select-none data-[highlighted]:bg-hover"
+            >
+              <IconPencil size={14} className="text-muted-foreground" />
+              Rename
+            </ContextMenu.Item>
+            {/* Light divider between the safe and destructive action. */}
+            <div role="separator" className="mx-1 my-1 h-px bg-border" />
+            <ContextMenu.Item
+              onClick={() => onDelete(session.path)}
+              className="flex cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-destructive outline-none select-none data-[highlighted]:bg-destructive/10 data-[highlighted]:text-destructive"
+            >
+              <IconTrash size={14} />
+              Delete
+            </ContextMenu.Item>
+          </ContextMenu.Popup>
+        </ContextMenu.Positioner>
+      </ContextMenu.Portal>
+    </ContextMenu.Root>
   );
 }

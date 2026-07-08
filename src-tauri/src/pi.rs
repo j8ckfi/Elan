@@ -225,6 +225,48 @@ pub struct SessionSummary {
     messages: u32,
 }
 
+/// The session store root, `~/.pi/agent/sessions`.
+fn sessions_base() -> Result<PathBuf, String> {
+    let home = std::env::var("HOME").map_err(|_| "no HOME".to_string())?;
+    Ok(PathBuf::from(home).join(".pi/agent/sessions"))
+}
+
+/// A path is a deletable/renamable session only if it's a `.jsonl` file inside
+/// the session store — never touch anything outside it.
+fn valid_session_path(path: &str) -> Result<PathBuf, String> {
+    let base = sessions_base()?;
+    let p = PathBuf::from(path);
+    let ok = p.starts_with(&base)
+        && p.extension().and_then(|e| e.to_str()) == Some("jsonl");
+    if ok {
+        Ok(p)
+    } else {
+        Err("path is not inside the session store".into())
+    }
+}
+
+/// Permanently delete a saved session file.
+#[tauri::command]
+pub fn pi_delete_session(path: String) -> Result<(), String> {
+    let p = valid_session_path(&path)?;
+    std::fs::remove_file(&p).map_err(|e| format!("delete failed: {e}"))
+}
+
+/// Rename a saved session by appending a `session_info` line — the listing
+/// reads the last one, so this wins. Used for sessions with no live process;
+/// the app renames open ones over RPC instead (pi owns that file).
+#[tauri::command]
+pub fn pi_rename_session(path: String, name: String) -> Result<(), String> {
+    use std::io::Write;
+    let p = valid_session_path(&path)?;
+    let line = serde_json::json!({ "type": "session_info", "name": name }).to_string();
+    let mut f = std::fs::OpenOptions::new()
+        .append(true)
+        .open(&p)
+        .map_err(|e| format!("open failed: {e}"))?;
+    writeln!(f, "{line}").map_err(|e| format!("write failed: {e}"))
+}
+
 /// Encode a cwd to its session-store directory name (mirrors pi's SessionManager).
 fn encode_cwd_dir(cwd: &str) -> String {
     let trimmed = cwd.trim_start_matches(['/', '\\']);

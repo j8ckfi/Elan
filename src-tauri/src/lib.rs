@@ -13,7 +13,9 @@ pub fn run() {
             pi::pi_start,
             pi::pi_send,
             pi::pi_stop,
-            pi::pi_list_sessions
+            pi::pi_list_sessions,
+            pi::pi_delete_session,
+            pi::pi_rename_session
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

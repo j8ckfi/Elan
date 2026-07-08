@@ -236,6 +236,39 @@ export function onSessionsChanged(cb: () => void): () => void {
   return () => clearInterval(id);
 }
 
+/** Permanently delete a saved session file (disk op, no RPC process needed). */
+export async function deleteSession(path: string): Promise<void> {
+  if (isTauri()) {
+    const { invoke } = await import("@tauri-apps/api/core");
+    await invoke("pi_delete_session", { path });
+    return;
+  }
+  const httpBase = BRIDGE_URL.replace(/^ws/, "http");
+  await fetch(`${httpBase}/delete?path=${encodeURIComponent(path)}`, {
+    method: "POST",
+  });
+}
+
+/**
+ * Rename a saved session on disk (appends a session_info line). Only for
+ * sessions with no live process — the app renames open ones over RPC instead.
+ */
+export async function renameSessionOnDisk(
+  path: string,
+  name: string,
+): Promise<void> {
+  if (isTauri()) {
+    const { invoke } = await import("@tauri-apps/api/core");
+    await invoke("pi_rename_session", { path, name });
+    return;
+  }
+  const httpBase = BRIDGE_URL.replace(/^ws/, "http");
+  await fetch(
+    `${httpBase}/rename?path=${encodeURIComponent(path)}&name=${encodeURIComponent(name)}`,
+    { method: "POST" },
+  );
+}
+
 /** List saved sessions on disk (out-of-band from any RPC stream). */
 export async function listSessions(cwd?: string): Promise<SessionSummary[]> {
   if (isTauri()) {

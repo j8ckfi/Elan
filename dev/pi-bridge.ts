@@ -101,6 +101,28 @@ const server = Bun.serve<Session, undefined>({
       return Response.json(listSessions(cwd), { headers: CORS });
     }
 
+    // ── Delete / rename a saved session (mirrors pi_delete/rename_session) ──
+    if (url.pathname === "/delete" || url.pathname === "/rename") {
+      if (req.method === "OPTIONS")
+        return new Response(null, { status: 204, headers: CORS });
+      const base = join(homedir(), ".pi", "agent", "sessions");
+      const p = url.searchParams.get("path") || "";
+      const ok = p.startsWith(base) && p.endsWith(".jsonl");
+      if (!ok) return new Response("bad path", { status: 400, headers: CORS });
+      try {
+        if (url.pathname === "/delete") {
+          require("node:fs").unlinkSync(p);
+        } else {
+          const name = url.searchParams.get("name") || "";
+          const line = JSON.stringify({ type: "session_info", name }) + "\n";
+          require("node:fs").appendFileSync(p, line);
+        }
+        return new Response(null, { status: 204, headers: CORS });
+      } catch (e) {
+        return new Response(String(e), { status: 500, headers: CORS });
+      }
+    }
+
     const model = url.searchParams.get("model") ?? undefined;
     const cwd = url.searchParams.get("cwd") ?? undefined;
     const name = url.searchParams.get("name") ?? undefined;

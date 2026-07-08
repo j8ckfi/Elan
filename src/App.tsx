@@ -24,7 +24,12 @@ import { ComposerControls } from "@/components/chat/ComposerControls";
 import { SessionSidebar } from "@/components/chat/SessionSidebar";
 import { usePiSession, type PiSession } from "@/hooks/usePiSession";
 import { useChatScroll } from "@/hooks/useChatScroll";
-import { listSessions, onSessionsChanged } from "@/lib/pi/client";
+import {
+  deleteSession,
+  listSessions,
+  onSessionsChanged,
+  renameSessionOnDisk,
+} from "@/lib/pi/client";
 import type { SessionSummary } from "@/lib/pi/sessions";
 import { cn } from "@/lib/utils";
 
@@ -183,9 +188,51 @@ function App() {
   );
   const newSessionIn = useCallback((cwd: string) => newTab(cwd), [newTab]);
 
-  const renameActive = useCallback(
-    (name: string) => actionsRef.current.get(activeKey)?.rename(name),
-    [activeKey],
+  const activeKeyRef = useRef(activeKey);
+  activeKeyRef.current = activeKey;
+
+  // Rename any session by disk path: if a live engine holds it, go through RPC
+  // (pi owns that open file); otherwise write the name to disk directly.
+  const renameSessionByPath = useCallback(
+    (path: string, name: string) => {
+      const trimmed = name.trim();
+      if (!trimmed) return;
+      const key = Object.keys(statusesRef.current).find(
+        (k) => statusesRef.current[k].sessionFile === path,
+      );
+      const act = key ? actionsRef.current.get(key) : undefined;
+      if (act) act.rename(trimmed);
+      else void renameSessionOnDisk(path, trimmed).then(() => refreshSessions());
+      refreshSessions();
+    },
+    [refreshSessions],
+  );
+
+  // Delete any session: close its tab (if open) so its process dies, then
+  // remove the file. The fs watcher + refresh drop it from the sidebar.
+  const deleteSessionByPath = useCallback(
+    (path: string) => {
+      const tab = tabsRef.current.find(
+        (t) =>
+          t.spec.sessionPath === path ||
+          statusesRef.current[t.key]?.sessionFile === path,
+      );
+      if (tab) {
+        const remaining = tabsRef.current.filter((t) => t.key !== tab.key);
+        if (remaining.length === 0) {
+          const k = nextKey();
+          setTabs([{ key: k, spec: {}, lastViewed: Date.now() }]);
+          setActiveKey(k);
+        } else {
+          if (activeKeyRef.current === tab.key)
+            setActiveKey(remaining[remaining.length - 1].key);
+          setTabs(remaining);
+        }
+      }
+      void deleteSession(path).then(() => refreshSessions());
+      refreshSessions();
+    },
+    [refreshSessions],
   );
 
   // ── warm-pool reaping ──────────────────────────────────────────────────
@@ -288,7 +335,8 @@ function App() {
           onNew={newSession}
           onNewInProject={newSessionIn}
           onSwitch={switchSession}
-          onRename={renameActive}
+          onRename={renameSessionByPath}
+          onDelete={deleteSessionByPath}
           onResize={handleResize}
         />
         <SidebarInset className="flex h-screen min-w-0 flex-col bg-background text-foreground">
