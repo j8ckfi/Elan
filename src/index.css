@@ -31,6 +31,8 @@
   --input: oklch(0.92 0.003 285);
   --ring: oklch(0.7 0.01 285);
   --hover: rgba(0, 0, 0, 0.045);
+  /* Selected-state fill (Fluid tabs/segmented pills) — a step past hover. */
+  --active: rgba(0, 0, 0, 0.07);
   /* Sidebar reads as a lightly recessed rail beside the white chat surface. */
   --sidebar: oklch(0.974 0.001 285);
   --sidebar-foreground: var(--foreground);
@@ -83,6 +85,7 @@
   --input: oklch(1 0 0 / 12%);
   --ring: oklch(0.5 0.01 285);
   --hover: rgba(255, 255, 255, 0.06);
+  --active: rgba(255, 255, 255, 0.09);
   --sidebar: oklch(0.185 0.004 285);
   --sidebar-foreground: var(--foreground);
   --sidebar-primary: var(--primary);
@@ -138,6 +141,7 @@
   --color-input: var(--input);
   --color-ring: var(--ring);
   --color-hover: var(--hover);
+  --color-active: var(--active);
   --color-sidebar: var(--sidebar);
   --color-sidebar-foreground: var(--sidebar-foreground);
   --color-sidebar-primary: var(--sidebar-primary);
