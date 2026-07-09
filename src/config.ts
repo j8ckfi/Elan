@@ -13,11 +13,14 @@
 import type { AgentAdapter } from "@/lib/agent/types";
 import { piAdapter } from "@/lib/adapters/pi";
 import { mockAdapter } from "@/lib/adapters/mock";
+import { claudeCodeAdapter } from "@/lib/adapters/claude-code";
 
-/** Adapters selectable at runtime (dev/tests): `VITE_AGENT=mock bun run dev`. */
+/** Adapters selectable at runtime (dev/tests): `VITE_AGENT=mock bun run dev`
+ *  or `?agent=claude-code`. */
 const REGISTRY: Record<string, AgentAdapter> = {
   pi: piAdapter,
   mock: mockAdapter,
+  "claude-code": claudeCodeAdapter,
 };
 
 // Runtime selection, for dev and tests only — forks should change the default
