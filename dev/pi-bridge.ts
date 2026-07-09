@@ -1,19 +1,23 @@
-// Dev-only WebSocket bridge: lets the browser build of Mari drive a real Pi.
-// Each WebSocket connection spawns its own `pi --mode rpc`; stdout JSONL lines
-// are forwarded verbatim to the socket, and socket messages are written to Pi's
-// stdin (one command per line). Run with:  bun dev/pi-bridge.ts
+// Dev-only WebSocket bridge: lets the browser build of Mari drive a real agent
+// CLI. Each WebSocket connection spawns the command described by its `spec`
+// query param (a JSON SpawnSpec: {bin, args, cwd} — see
+// src/lib/agent/types.ts); stdout JSONL lines are forwarded verbatim to the
+// socket, and socket messages are written to the child's stdin (one command
+// per line). Run with:  bun dev/pi-bridge.ts
 //
-// The desktop build uses Tauri IPC instead and never touches this.
+// The desktop build uses Tauri IPC instead and never touches this. The
+// /sessions, /delete and /rename HTTP endpoints mirror the Rust core's
+// Pi-session-store commands for browser dev.
 
 import type { Subprocess } from "bun";
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import {
   encodeCwdDir,
   parseSessionMeta,
-  type SessionSummary,
-} from "../src/lib/pi/sessions.ts";
+} from "../src/lib/adapters/pi/store-format.ts";
+import type { SessionSummary } from "../src/lib/agent/types.ts";
 
 const PORT = Number(process.env.PI_BRIDGE_PORT ?? 4317);
 
@@ -63,29 +67,22 @@ function listSessions(cwd?: string): SessionSummary[] {
   return out;
 }
 
-function resolvePiBin(): string {
-  if (process.env.MARI_PI_BIN) return process.env.MARI_PI_BIN;
-  const home = process.env.HOME;
-  if (home) {
-    const local = `${home}/.local/bin/pi`;
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
-      if (require("fs").existsSync(local)) return local;
-    } catch {
-      /* fall through */
-    }
-  }
-  return "pi";
+/** Resolve a bare binary name: explicit paths pass through; otherwise prefer
+ *  ~/.local/bin (where npm-global CLIs land) and fall back to PATH lookup. */
+function resolveBin(bin: string): string {
+  if (bin.includes("/")) return bin;
+  const home = process.env.HOME ?? homedir();
+  const local = join(home, ".local/bin", bin);
+  if (existsSync(local)) return local;
+  return bin;
 }
 
 interface Session {
   proc: Subprocess<"pipe", "pipe", "pipe">;
   buffer: string;
-  /** Resolved working directory pi was spawned in (reported to the client). */
+  /** Resolved working directory the child was spawned in (reported to the client). */
   cwd: string;
 }
-
-const PI_BIN = resolvePiBin();
 
 const server = Bun.serve<Session, undefined>({
   port: PORT,
@@ -123,18 +120,18 @@ const server = Bun.serve<Session, undefined>({
       }
     }
 
-    const model = url.searchParams.get("model") ?? undefined;
-    const cwd = url.searchParams.get("cwd") ?? undefined;
-    const name = url.searchParams.get("name") ?? undefined;
-    const session = url.searchParams.get("session") ?? undefined;
+    // ── Spawn the agent CLI this socket will own ────────────────────────────
+    let spec: { bin?: string; args?: string[]; cwd?: string } = {};
+    try {
+      spec = JSON.parse(url.searchParams.get("spec") ?? "{}");
+    } catch {
+      return new Response("pi-bridge: malformed spec param", { status: 400 });
+    }
+    const bin = resolveBin(spec.bin || "pi");
+    const args = spec.args ?? [];
 
-    const args = ["--mode", "rpc"];
-    if (model) args.push("--model", model);
-    if (name) args.push("--name", name);
-    if (session) args.push("--session", session);
-
-    const resolvedCwd = cwd || process.env.HOME || homedir();
-    const proc = Bun.spawn([PI_BIN, ...args], {
+    const resolvedCwd = spec.cwd || process.env.HOME || homedir();
+    const proc = Bun.spawn([bin, ...args], {
       stdin: "pipe",
       stdout: "pipe",
       stderr: "pipe",
@@ -151,9 +148,9 @@ const server = Bun.serve<Session, undefined>({
   websocket: {
     open(ws) {
       const { proc } = ws.data;
-      console.log(`[bridge] pi spawned (pid ${proc.pid}) in ${ws.data.cwd}`);
-      // Report the working directory up front — pi's get_state omits it, but the
-      // breadcrumb needs the real project path (not a fallback).
+      console.log(`[bridge] agent spawned (pid ${proc.pid}) in ${ws.data.cwd}`);
+      // Report the working directory up front — some CLIs never state it, but
+      // the breadcrumb needs the real project path (not a fallback).
       try {
         ws.send(JSON.stringify({ type: "cwd", cwd: ws.data.cwd }));
       } catch {
@@ -216,7 +213,9 @@ const server = Bun.serve<Session, undefined>({
       }
     },
     close(ws) {
-      console.log(`[bridge] socket closed, killing pi (pid ${ws.data.proc.pid})`);
+      console.log(
+        `[bridge] socket closed, killing agent (pid ${ws.data.proc.pid})`,
+      );
       try {
         ws.data.proc.kill();
       } catch {
@@ -227,4 +226,3 @@ const server = Bun.serve<Session, undefined>({
 });
 
 console.log(`[bridge] pi-bridge listening on ws://localhost:${server.port}`);
-console.log(`[bridge] using pi binary: ${PI_BIN}`);

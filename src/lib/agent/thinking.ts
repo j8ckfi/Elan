@@ -1,11 +1,11 @@
 // Model-aware thinking levels.
 //
-// Pi exposes each model's supported reasoning levels through `Model.reasoning`
-// (does it think at all?) and `Model.thinkingLevelMap` (which of the six pi
-// levels the provider actually accepts). We must NOT hard-code a fixed list of
-// levels — GLM-5.2 offers only High + Max, gpt-5.5 drops the low tiers, and
-// non-reasoning models have none at all. This mirrors pi-ai's own
-// `getSupportedThinkingLevels` so the picker always matches the model.
+// A model's supported reasoning levels come from `Model.reasoning` (does it
+// think at all?) and `Model.thinkingLevelMap` (which of the six levels the
+// provider actually accepts). Never hard-code a fixed list — some models offer
+// only High + Max, some drop the low tiers, and non-reasoning models have none
+// at all. Adapters populate the map from their backend (Pi mirrors pi-ai's
+// `getSupportedThinkingLevels`); the picker always matches the model.
 
 import type { Model, ThinkingLevel } from "./types";
 
@@ -21,7 +21,7 @@ const ORDER: ThinkingLevel[] = [
 
 /** The thinking levels a given model actually accepts.
  *
- *  Rules (verbatim from pi-ai `getSupportedThinkingLevels`):
+ *  Rules:
  *   • a non-reasoning model supports only `off`;
  *   • a level mapped to `null` is explicitly unsupported;
  *   • `xhigh` counts only when the model lists it (map value !== undefined) —

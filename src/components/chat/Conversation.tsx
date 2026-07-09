@@ -12,7 +12,7 @@ import type {
   RunPart,
   WorkPart,
   UserItem,
-} from "@/lib/pi/reducer";
+} from "@/lib/agent/types";
 import { ChatMessage } from "@/components/ui/chat-message";
 import {
   ThinkingSteps,

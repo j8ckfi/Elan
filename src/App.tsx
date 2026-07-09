@@ -24,15 +24,10 @@ import { SessionSidebar } from "@/components/chat/SessionSidebar";
 import { SettingsDialog } from "@/components/chat/SettingsDialog";
 import { useSettings } from "@/lib/settings";
 import { useUpdater } from "@/lib/updater";
-import { usePiSession, type PiSession } from "@/hooks/usePiSession";
+import { useAgentSession, type AgentSession } from "@/hooks/useAgentSession";
 import { useChatScroll } from "@/hooks/useChatScroll";
-import {
-  deleteSession,
-  listSessions,
-  onSessionsChanged,
-  renameSessionOnDisk,
-} from "@/lib/pi/client";
-import type { SessionSummary } from "@/lib/pi/sessions";
+import { agent } from "@/config";
+import type { SessionSummary } from "@/lib/agent/types";
 import { cn } from "@/lib/utils";
 
 // ── Session manager types ────────────────────────────────────────────────────
@@ -94,9 +89,11 @@ function App() {
   }, [settings.glassSidebar]);
 
   // Global on-disk session list (drives the sidebar; grouped by project).
+  // Adapters without a session store just show an empty sidebar list.
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const refreshNow = useCallback(() => {
-    listSessions()
+    agent.sessions
+      ?.list()
       .then(setSessions)
       .catch(() => {});
   }, []);
@@ -114,8 +111,8 @@ function App() {
   useEffect(() => {
     refreshNow();
     // Filesystem watch (desktop) / poll (browser): sessions written by ANY
-    // process — including a terminal `pi` — sync into the sidebar immediately.
-    const off = onSessionsChanged(refreshSessions);
+    // process — including a terminal agent — sync into the sidebar immediately.
+    const off = agent.sessions?.watch(refreshSessions) ?? (() => {});
     const onFocus = () => refreshNow();
     window.addEventListener("focus", onFocus);
     return () => {
@@ -227,7 +224,8 @@ function App() {
       );
       const act = key ? actionsRef.current.get(key) : undefined;
       if (act) act.rename(trimmed);
-      else void renameSessionOnDisk(path, trimmed).then(() => refreshSessions());
+      else
+        void agent.sessions?.rename(path, trimmed).then(() => refreshSessions());
       refreshSessions();
     },
     [refreshSessions],
@@ -254,7 +252,7 @@ function App() {
           setTabs(remaining);
         }
       }
-      void deleteSession(path).then(() => refreshSessions());
+      void agent.sessions?.delete(path).then(() => refreshSessions());
       refreshSessions();
     },
     [refreshSessions],
@@ -447,7 +445,8 @@ function SessionEngine({
   onActivity: () => void;
   onSelectProject: (cwd: string) => void;
 }) {
-  const pi = usePiSession({
+  const session = useAgentSession({
+    adapter: agent,
     procKey,
     cwd: spec.cwd,
     sessionPath: spec.sessionPath,
@@ -455,7 +454,7 @@ function SessionEngine({
     onActivity,
   });
 
-  const { identity, streaming, connection, renameSession } = pi;
+  const { identity, streaming, connection, renameSession } = session;
   useEffect(() => {
     onReport(procKey, {
       sessionFile: identity.sessionFile,
@@ -481,7 +480,7 @@ function SessionEngine({
   if (!active) return null;
   return (
     <ChatSurface
-      pi={pi}
+      session={session}
       spec={spec}
       recents={recents}
       fallbackThread={fallbackThread}
@@ -494,13 +493,13 @@ function SessionEngine({
 // The visible pane for the active session: breadcrumb header, the transcript
 // (or Cursor-style home), and the composer.
 function ChatSurface({
-  pi,
+  session,
   spec,
   recents,
   fallbackThread,
   onSelectProject,
 }: {
-  pi: PiSession;
+  session: AgentSession;
   spec: TabSpec;
   recents: string[];
   fallbackThread?: string;
@@ -508,16 +507,16 @@ function ChatSurface({
 }) {
   const [draft, setDraft] = useState("");
   const [files, setFiles] = useState<File[]>([]);
-  // pi.items is a fresh array each streamed update — the revision the scroll
-  // controller re-anchors on.
-  const scroll = useChatScroll(pi.streaming, pi.items);
+  // session.items is a fresh array each streamed update — the revision the
+  // scroll controller re-anchors on.
+  const scroll = useChatScroll(session.streaming, session.items);
 
-  const isHome = pi.items.length === 0;
-  const projectCwd = pi.identity.cwd ?? spec.cwd;
+  const isHome = session.items.length === 0;
+  const projectCwd = session.identity.cwd ?? spec.cwd;
   const threadName =
-    pi.identity.sessionName ??
+    session.identity.sessionName ??
     fallbackThread ??
-    (pi.items.length > 0 ? "Untitled" : "New chat");
+    (session.items.length > 0 ? "Untitled" : "New chat");
 
   // Home: an interactive folder switcher. Conversation header: display-only.
   const homeBreadcrumb = (
@@ -537,11 +536,11 @@ function ChatSurface({
     />
   );
 
-  const disconnectedBanner = pi.connection === "disconnected" && (
+  const disconnectedBanner = session.connection === "disconnected" && (
     <div className="mb-2 flex items-center justify-between rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-[13px] text-destructive">
-      <span>Pi disconnected.</span>
+      <span>{agent.name} disconnected.</span>
       <button
-        onClick={() => void pi.restart()}
+        onClick={() => void session.restart()}
         className="rounded-md px-2 py-1 font-medium hover:bg-destructive/15"
       >
         Reconnect
@@ -556,21 +555,22 @@ function ChatSurface({
       onValueChange={setDraft}
       files={files}
       onFilesChange={setFiles}
-      status={pi.streaming ? "streaming" : "idle"}
-      onStop={pi.abort}
-      placeholder={isHome ? "Do anything" : "Message Pi…"}
+      status={session.streaming ? "streaming" : "idle"}
+      onStop={session.abort}
+      placeholder={isHome ? "Do anything" : `Message ${agent.name}…`}
       leftSlot={
         <ComposerControls
-          model={pi.model}
-          availableModels={pi.availableModels}
-          thinkingLevel={pi.thinkingLevel}
-          stats={pi.stats}
-          onSelectModel={pi.setModelById}
-          onSelectThinking={pi.setThinking}
+          capabilities={session.capabilities}
+          model={session.model}
+          availableModels={session.availableModels}
+          thinkingLevel={session.thinkingLevel}
+          stats={session.stats}
+          onSelectModel={session.setModelById}
+          onSelectThinking={session.setThinking}
         />
       }
       onSend={(text, sentFiles) => {
-        void pi.sendPrompt(text, sentFiles);
+        void session.sendPrompt(text, sentFiles);
         setDraft("");
         setFiles([]);
         scroll.onUserSend();
@@ -609,9 +609,9 @@ function ChatSurface({
               <div className="flex min-h-full flex-col justify-end">
                 <div ref={scroll.contentRef}>
                   <Conversation
-                    items={pi.items}
-                    streaming={pi.streaming}
-                    onAnswer={pi.answer}
+                    items={session.items}
+                    streaming={session.streaming}
+                    onAnswer={session.answer}
                     onExpandTrace={scroll.disengageFollow}
                   />
                 </div>
@@ -633,7 +633,7 @@ function ChatSurface({
 
             {/* Polite status at message boundaries (not per token). */}
             <span className="sr-only" role="status" aria-live="polite">
-              {pi.streaming ? "Assistant is responding" : ""}
+              {session.streaming ? "Assistant is responding" : ""}
             </span>
           </div>
 

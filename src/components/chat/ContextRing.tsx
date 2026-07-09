@@ -8,7 +8,7 @@
 // the same surface family.
 
 import { Tooltip as TooltipPrimitive } from "@base-ui/react/tooltip";
-import type { Model, SessionStats } from "@/lib/pi/types";
+import type { Model, SessionStats } from "@/lib/agent/types";
 import { cn } from "@/lib/utils";
 
 function fmtTokens(n: number): string {

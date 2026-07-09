@@ -16,7 +16,7 @@ import {
   createElement,
   type ReactNode,
 } from "react";
-import type { ThinkingLevel } from "@/lib/pi/types";
+import type { ThinkingLevel } from "@/lib/agent/types";
 
 export type ThemePref = "system" | "light" | "dark";
 

@@ -29,7 +29,7 @@ import {
   SidebarMenuItem,
   useSidebar,
 } from "@/components/ui/sidebar";
-import type { SessionSummary } from "@/lib/pi/sessions";
+import type { SessionSummary } from "@/lib/agent/types";
 import type { Updater } from "@/lib/updater";
 import { cn } from "@/lib/utils";
 

@@ -4,7 +4,7 @@
 // signature, then downloads + relaunches on request.
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { isTauri } from "@/lib/pi/client";
+import { isTauri } from "@/lib/agent/transport";
 import type { Update } from "@tauri-apps/plugin-updater";
 
 export type UpdatePhase =

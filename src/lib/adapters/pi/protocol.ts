@@ -1,42 +1,13 @@
-// Pi RPC protocol types — transcribed from the pi-coding-agent docs/rpc.md.
-// Kept pragmatic: the shapes the reducer/UI actually read are precise; the
-// rest is permissive so protocol additions don't break parsing.
+// Pi RPC wire protocol — transcribed from the pi-coding-agent docs/rpc.md.
+// Kept pragmatic: the shapes the adapter actually reads are precise; the rest
+// is permissive so protocol additions don't break parsing.
+//
+// Nothing outside src/lib/adapters/pi/ may import this file — the UI only sees
+// the neutral contract in src/lib/agent/types.ts.
 
-export type ThinkingLevel =
-  | "off"
-  | "minimal"
-  | "low"
-  | "medium"
-  | "high"
-  | "xhigh";
+import type { Model, ThinkingLevel } from "@/lib/agent/types";
 
-export interface ModelCost {
-  input: number;
-  output: number;
-  cacheRead: number;
-  cacheWrite: number;
-}
-
-export interface Model {
-  id: string;
-  name: string;
-  api: string;
-  provider: string;
-  baseUrl?: string;
-  reasoning?: boolean;
-  /** Maps each pi thinking level to a provider/model-specific wire value.
-   *  A missing key uses the provider default (level supported); `null` marks
-   *  the level as unsupported. `xhigh` counts only when explicitly present.
-   *  This is what makes the thinking picker model-aware — see
-   *  {@link ./thinking.supportedThinkingLevels}. */
-  thinkingLevelMap?: Partial<Record<ThinkingLevel, string | null>>;
-  input?: string[];
-  contextWindow?: number;
-  maxTokens?: number;
-  cost?: ModelCost;
-}
-
-// ─── Message content blocks ────────────────────────────────────────────────
+// ─── Message content blocks ──────────────────────────────────────────────────
 export interface TextContent {
   type: "text";
   text: string;
@@ -97,42 +68,7 @@ export type AgentMessage =
   | ToolResultMessage
   | { role: string; [k: string]: unknown };
 
-// ─── Streaming delta (message_update.assistantMessageEvent) ─────────────────
-export type AssistantDelta =
-  | { type: "start"; partial?: AssistantMessage }
-  | { type: "text_start"; contentIndex: number; partial?: AssistantMessage }
-  | {
-      type: "text_delta";
-      contentIndex: number;
-      delta: string;
-      partial?: AssistantMessage;
-    }
-  | {
-      type: "text_end";
-      contentIndex: number;
-      content?: string;
-      partial?: AssistantMessage;
-    }
-  | { type: "thinking_start"; contentIndex: number; partial?: AssistantMessage }
-  | {
-      type: "thinking_delta";
-      contentIndex: number;
-      delta: string;
-      partial?: AssistantMessage;
-    }
-  | { type: "thinking_end"; contentIndex: number; partial?: AssistantMessage }
-  | { type: "toolcall_start"; contentIndex: number; partial?: AssistantMessage }
-  | { type: "toolcall_delta"; contentIndex: number; delta?: string }
-  | {
-      type: "toolcall_end";
-      contentIndex: number;
-      toolCall?: ToolCallContent;
-      partial?: AssistantMessage;
-    }
-  | { type: "done"; reason?: "stop" | "length" | "toolUse" }
-  | { type: "error"; reason?: "aborted" | "error"; message?: string };
-
-// ─── Tool execution result payload ─────────────────────────────────────────
+// ─── Tool execution result payload ───────────────────────────────────────────
 export interface ToolResult {
   content: Array<{ type: "text"; text: string } | Record<string, unknown>>;
   details?: {
@@ -142,7 +78,7 @@ export interface ToolResult {
   };
 }
 
-// ─── Events (from stdout `pi://event`) ─────────────────────────────────────
+// ─── Events (stdout lines) ───────────────────────────────────────────────────
 export type PiEvent =
   | { type: "agent_start" }
   | { type: "agent_end"; messages?: AgentMessage[] }
@@ -152,7 +88,7 @@ export type PiEvent =
   | {
       type: "message_update";
       message: AssistantMessage;
-      assistantMessageEvent: AssistantDelta;
+      assistantMessageEvent: unknown;
     }
   | { type: "message_end"; message: AgentMessage }
   | {
@@ -205,9 +141,11 @@ export type PiEvent =
       error: string;
     }
   | ExtensionUiRequest
-  | RpcResponse;
+  | RpcResponse
+  // Synthetic host line: the resolved working directory of the spawned child.
+  | { type: "cwd"; cwd?: string };
 
-// ─── Extension UI sub-protocol ─────────────────────────────────────────────
+// ─── Extension UI sub-protocol ───────────────────────────────────────────────
 export type ExtensionUiRequest = {
   type: "extension_ui_request";
   id: string;
@@ -237,9 +175,6 @@ export type ExtensionUiRequest = {
   | { method: "set_editor_text"; text: string }
 );
 
-/** Dialog methods that block waiting for an extension_ui_response. */
-export type ExtensionUiDialogMethod = "select" | "confirm" | "input" | "editor";
-
 export type ExtensionUiResponse = {
   type: "extension_ui_response";
   id: string;
@@ -249,7 +184,7 @@ export type ExtensionUiResponse = {
   | { cancelled: true }
 );
 
-// ─── Command responses ─────────────────────────────────────────────────────
+// ─── Command responses ───────────────────────────────────────────────────────
 export interface RpcResponse {
   type: "response";
   id?: string;
@@ -259,7 +194,7 @@ export interface RpcResponse {
   data?: unknown;
 }
 
-// ─── Outgoing commands (subset we use) ─────────────────────────────────────
+// ─── Outgoing commands (subset we use) ───────────────────────────────────────
 export type StreamingBehavior = "steer" | "followUp";
 
 export type PiCommand =
@@ -278,9 +213,7 @@ export type PiCommand =
   | { id?: string; type: "get_messages" }
   | { id?: string; type: "get_available_models" }
   | { id?: string; type: "set_model"; provider: string; modelId: string }
-  | { id?: string; type: "cycle_model" }
   | { id?: string; type: "set_thinking_level"; level: ThinkingLevel }
-  | { id?: string; type: "cycle_thinking_level" }
   | { id?: string; type: "get_session_stats" }
   | { id?: string; type: "compact"; customInstructions?: string }
   | { id?: string; type: "get_commands" }
@@ -290,25 +223,12 @@ export type PiCommand =
   | { id?: string; type: "set_session_name"; name: string }
   | ExtensionUiResponse;
 
-// ─── Session stats (get_session_stats response.data) ───────────────────────
-export interface SessionStats {
+/** get_state response data (fields we read). */
+export interface GetStateData {
+  model?: Model;
+  thinkingLevel?: ThinkingLevel;
   sessionFile?: string;
   sessionId?: string;
-  userMessages?: number;
-  assistantMessages?: number;
-  toolCalls?: number;
-  totalMessages?: number;
-  tokens?: {
-    input: number;
-    output: number;
-    cacheRead: number;
-    cacheWrite: number;
-    total: number;
-  };
-  cost?: number;
-  contextUsage?: {
-    tokens: number | null;
-    contextWindow: number;
-    percent: number | null;
-  };
+  sessionName?: string;
+  cwd?: string;
 }

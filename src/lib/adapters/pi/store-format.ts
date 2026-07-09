@@ -1,28 +1,12 @@
-// Session listing metadata — Pi has no cross-session "list" RPC, so the sidebar
-// reads the on-disk session store (~/.pi/agent/sessions/<encoded-cwd>/*.jsonl).
+// Pi's on-disk session store format (~/.pi/agent/sessions/<encoded-cwd>/*.jsonl).
 //
-// This module is intentionally dependency-free (no `fs`, no `@/` aliases) so it
-// can be imported by BOTH the browser bundle (for the type + parser) and the
-// Bun dev bridge (which does the actual disk reads). The Rust core mirrors this
-// parsing for the Tauri build.
+// This module is intentionally dependency-light (no `fs`, relative type import
+// only) so it can be imported by BOTH the browser bundle (parser for the
+// session store client) and the Bun dev bridge (which does the actual disk
+// reads). The Rust core mirrors this parsing for the Tauri build — keep the
+// three in sync.
 
-/** One row in the session sidebar. */
-export interface SessionSummary {
-  /** Absolute path to the .jsonl session file (the switch_session key). */
-  path: string;
-  id: string;
-  cwd: string;
-  /** User-set display name (latest session_info entry), if any. */
-  name?: string;
-  /** Best label: name → first user message → "Untitled". */
-  title: string;
-  /** Epoch ms from the session header timestamp. */
-  createdAt: number;
-  /** Epoch ms from the file mtime — proxy for last activity. */
-  updatedAt: number;
-  /** Count of user + assistant messages. */
-  messages: number;
-}
+import type { SessionSummary } from "../../agent/types";
 
 /** Encode a cwd to its session-store directory name (mirrors pi's SessionManager). */
 export function encodeCwdDir(cwd: string): string {

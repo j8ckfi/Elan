@@ -11,7 +11,7 @@ import { Combobox } from "@base-ui/react/combobox";
 import { IconSearch, IconCheck } from "@tabler/icons-react";
 import { cn } from "@/lib/utils";
 import { useShape } from "@/lib/shape-context";
-import type { Model } from "@/lib/pi/types";
+import type { Model } from "@/lib/agent/types";
 
 // Each item carries the wire id (`provider/id`) plus a display label. Base UI
 // uses `.value` for identity/equality and `.label` for the input text + filter.

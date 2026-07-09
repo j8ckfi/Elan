@@ -1,10 +1,16 @@
-//! Pi RPC process manager.
+//! Agent CLI process manager.
 //!
-//! Spawns `pi --mode rpc` and bridges its JSONL protocol to the webview:
+//! Spawns the command the frontend's adapter describes (a SpawnSpec: bin +
+//! args + cwd) and bridges its JSONL stdio protocol to the webview:
 //!   - every stdout line is emitted verbatim as `pi://event`
 //!   - stderr lines are emitted as `pi://stderr`
 //!   - process exit is emitted as `pi://exit`
-//! The frontend sends RPC commands (one JSON object per line) via `pi_send`.
+//! The frontend sends commands (one JSON object per line) via `pi_send`.
+//!
+//! This module is protocol-blind: what the lines *mean* is the frontend
+//! adapter's business (src/lib/adapters/). The only Pi-specific code here is
+//! the session-store section at the bottom (listing/watching Pi's on-disk
+//! sessions), which mirrors src/lib/adapters/pi/store-format.ts.
 //!
 //! Framing note: the Pi RPC docs warn that generic line readers which split on
 //! U+2028/U+2029 are NOT protocol-compliant. Rust's `AsyncBufReadExt::lines()`
@@ -20,13 +26,13 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, Command};
 use tokio::sync::Mutex;
 
-/// One live Pi child, addressed by a caller-supplied `key`.
+/// One live agent child, addressed by a caller-supplied `key`.
 struct ProcHandle {
     stdin: ChildStdin,
     child: Child,
 }
 
-/// Pool of running Pi children, keyed by session/process key. Mari runs one
+/// Pool of running agent children, keyed by session/process key. Mari runs one
 /// process per open session so background agents keep streaming when you
 /// navigate away — the `key` routes every command/event to the right child.
 #[derive(Default)]
@@ -34,24 +40,21 @@ pub struct PiState {
     procs: Mutex<HashMap<String, ProcHandle>>,
 }
 
-/// Resolve the `pi` binary. GUI apps launched from Finder don't inherit the
-/// user's shell PATH, so prefer explicit locations before falling back to PATH.
-fn resolve_pi_bin(override_path: Option<&str>) -> String {
-    if let Some(p) = override_path.filter(|s| !s.is_empty()) {
-        return p.to_string();
+/// Resolve a binary name to something spawnable. `Command::new` resolves bare
+/// names against the PARENT's PATH — which, for a Finder-launched app, is the
+/// bare system default that the user's CLIs are never on. So bare names are
+/// searched against the augmented PATH ourselves; explicit paths pass through.
+fn resolve_bin(bin: &str, path: &str) -> String {
+    if bin.contains('/') {
+        return bin.to_string();
     }
-    if let Ok(explicit) = std::env::var("MARI_PI_BIN") {
-        if !explicit.is_empty() {
-            return explicit;
+    for dir in path.split(':').filter(|s| !s.is_empty()) {
+        let candidate = PathBuf::from(dir).join(bin);
+        if candidate.is_file() {
+            return candidate.to_string_lossy().into_owned();
         }
     }
-    if let Ok(home) = std::env::var("HOME") {
-        let local = PathBuf::from(&home).join(".local/bin/pi");
-        if local.exists() {
-            return local.to_string_lossy().into_owned();
-        }
-    }
-    "pi".to_string()
+    bin.to_string()
 }
 
 /// A PATH the spawned Pi can actually run under. `pi` is a `#!/usr/bin/env node`
@@ -132,22 +135,17 @@ fn path_with_extra(extra: &[String]) -> String {
     dirs.join(":")
 }
 
+/// How to launch one session's CLI — built by the frontend adapter
+/// (`AgentAdapter.spawn`, see src/lib/agent/types.ts). This host stays
+/// protocol- and flag-blind.
 #[derive(serde::Deserialize, Default)]
-pub struct StartOptions {
+pub struct SpawnSpec {
+    /// Binary name or explicit path (bare names resolve on the augmented PATH).
+    pub bin: Option<String>,
+    /// Full argument list, verbatim.
+    pub args: Option<Vec<String>>,
     /// Working directory for the agent (defaults to the user's home).
     pub cwd: Option<String>,
-    /// Model pattern/id (`--model`).
-    pub model: Option<String>,
-    /// Session display name (`--name`).
-    pub name: Option<String>,
-    /// Existing session file/id to boot into (`--session`). When set the child
-    /// loads that transcript so an already-saved session re-attaches to a live
-    /// process; omit it to start a fresh session.
-    pub session: Option<String>,
-    /// Explicit path to the `pi` binary (Settings override); auto-resolved when
-    /// empty/absent.
-    #[serde(rename = "piBin")]
-    pub pi_bin: Option<String>,
     /// Extra directories prepended to the child's PATH (Settings override).
     #[serde(rename = "pathDirs")]
     pub path_dirs: Option<Vec<String>>,
@@ -162,39 +160,29 @@ fn emit_line(app: &AppHandle, key: &str, line: &str) {
     let _ = app.emit("pi://event", env);
 }
 
-/// Start (or restart) the Pi RPC subprocess for `key`.
+/// Start (or restart) the agent subprocess for `key`.
 #[tauri::command]
 pub async fn pi_start(
     app: AppHandle,
     state: State<'_, PiState>,
     key: String,
-    options: Option<StartOptions>,
+    spec: Option<SpawnSpec>,
 ) -> Result<(), String> {
     // Tear down any previous child under this key first so restart is clean.
     stop_one(&state, &key).await;
 
-    let opts = options.unwrap_or_default();
-    let bin = resolve_pi_bin(opts.pi_bin.as_deref());
-
-    let mut cmd = Command::new(&bin);
-    // Finder-launched apps inherit a bare PATH; give pi a real one so its
+    let spec = spec.unwrap_or_default();
+    // Finder-launched apps inherit a bare PATH; give the child a real one so a
     // `#!/usr/bin/env node` shebang (and any tools it shells out to) resolve.
     // Any extra dirs from Settings take priority.
-    cmd.env(
-        "PATH",
-        path_with_extra(opts.path_dirs.as_deref().unwrap_or(&[])),
-    );
-    cmd.arg("--mode").arg("rpc");
-    if let Some(model) = opts.model.as_ref().filter(|s| !s.is_empty()) {
-        cmd.arg("--model").arg(model);
-    }
-    if let Some(name) = opts.name.as_ref().filter(|s| !s.is_empty()) {
-        cmd.arg("--name").arg(name);
-    }
-    if let Some(session) = opts.session.as_ref().filter(|s| !s.is_empty()) {
-        cmd.arg("--session").arg(session);
-    }
-    let cwd = opts
+    let path = path_with_extra(spec.path_dirs.as_deref().unwrap_or(&[]));
+    let bin = resolve_bin(spec.bin.as_deref().filter(|s| !s.is_empty()).unwrap_or("pi"), &path);
+    let args = spec.args.unwrap_or_default();
+
+    let mut cmd = Command::new(&bin);
+    cmd.env("PATH", path);
+    cmd.args(&args);
+    let cwd = spec
         .cwd
         .filter(|s| !s.is_empty())
         .or_else(|| std::env::var("HOME").ok());
@@ -209,7 +197,7 @@ pub async fn pi_start(
 
     let mut child = cmd
         .spawn()
-        .map_err(|e| format!("failed to spawn `{bin} --mode rpc`: {e}"))?;
+        .map_err(|e| format!("failed to spawn `{bin} {}`: {e}", args.join(" ")))?;
 
     let stdout = child.stdout.take().ok_or("no stdout on pi child")?;
     let stderr = child.stderr.take().ok_or("no stderr on pi child")?;

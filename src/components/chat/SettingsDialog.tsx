@@ -17,8 +17,8 @@ import {
   useSettingsActions,
   type ThemePref,
 } from "@/lib/settings";
-import type { ThinkingLevel } from "@/lib/pi/types";
-import { THINKING_LABELS } from "@/lib/pi/thinking";
+import type { ThinkingLevel } from "@/lib/agent/types";
+import { THINKING_LABELS } from "@/lib/agent/thinking";
 
 const REPO_URL = "https://github.com/j8ckfi/Mari";
 
