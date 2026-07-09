@@ -203,7 +203,13 @@ export function SessionSidebar({
   }, [dragCwd, drop, orderedProjects, setOrder]);
 
   return (
-    <Sidebar collapsible="offcanvas" className="border-r-0">
+    // Deep drag region: empty sidebar space moves the window (buttons/inputs
+    // block it themselves; reorder + resize opt out with ="false").
+    <Sidebar
+      collapsible="offcanvas"
+      className="border-r-0"
+      data-tauri-drag-region="deep"
+    >
       <SidebarHeader className="px-1 pt-9">
         <button
           onClick={onNew}
@@ -357,6 +363,7 @@ function SidebarResizer({ onResize }: { onResize: (width: number) => void }) {
 
   return (
     <div
+      data-tauri-drag-region="false"
       onPointerDown={onPointerDown}
       className={cn(
         "absolute inset-y-0 right-0 z-20 w-2 cursor-col-resize",
@@ -435,6 +442,7 @@ function ProjectGroup({
           hover. Outer is a div so the plus can be its own button (no nesting). */}
       <div
         draggable
+        data-tauri-drag-region="false"
         onDragStart={onDragStart}
         onDragEnd={onDragEnd}
         className={cn(
