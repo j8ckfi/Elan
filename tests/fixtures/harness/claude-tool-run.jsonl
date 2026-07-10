@@ -1,0 +1,9 @@
+{"type":"system","subtype":"init","cwd":"/tmp/worktree","session_id":"11111111-2222-3333-4444-555555555555","tools":["Bash","Read"],"model":"claude-sonnet-5","permissionMode":"bypassPermissions"}
+{"type":"stream_event","event":{"type":"content_block_start","index":0,"content_block":{"type":"thinking"}},"session_id":"11111111-2222-3333-4444-555555555555"}
+{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"Let me run the probe."}},"session_id":"11111111-2222-3333-4444-555555555555"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"thinking","thinking":"Let me run the probe."},{"type":"tool_use","id":"toolu_01","name":"Bash","input":{"command":"echo elan-ok"}}]},"session_id":"11111111-2222-3333-4444-555555555555"}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_01","content":[{"type":"text","text":"elan-ok\n"}],"is_error":false}]},"session_id":"11111111-2222-3333-4444-555555555555"}
+{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Done — the probe printed "}},"session_id":"11111111-2222-3333-4444-555555555555"}
+{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"elan-ok."}},"session_id":"11111111-2222-3333-4444-555555555555"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Done — the probe printed elan-ok."}]},"session_id":"11111111-2222-3333-4444-555555555555"}
+{"type":"result","subtype":"success","is_error":false,"duration_ms":4200,"num_turns":2,"result":"Done — the probe printed elan-ok.","session_id":"11111111-2222-3333-4444-555555555555"}

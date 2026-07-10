@@ -53,7 +53,7 @@ export const DEFAULT_SETTINGS: Settings = {
   glassSidebar: false,
 };
 
-const STORAGE_KEY = "mari.settings";
+const STORAGE_KEY = "elan.settings";
 
 function load(): Settings {
   try {

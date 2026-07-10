@@ -396,18 +396,32 @@
 .mari-md .mari-pre:last-child {
   margin-bottom: 0;
 }
+/* Background + text are theme tokens, not a fixed dark palette: a fenced
+   block with no detected language (e.g. an ANSI-stripped stderr tail on a
+   session-failure post) renders as bare text with no hljs span, so it falls
+   back to this rule's own color — it must hold contrast on its own rather
+   than assume a dark backdrop. `--secondary` doubles as "elevated surface"
+   in both themes (light-gray on light, elevated dark on dark), matching the
+   user bubble's own bg-secondary. Explicit `color` on the code element beats
+   highlight.js's `.hljs` base rule on specificity (3 classes > 1), so
+   detected-language spans keep their own syntax colors untouched while
+   unclassified text gets real contrast. Long blocks scroll instead of
+   pushing the rest of the post off-screen. */
 .mari-md pre {
   margin: 0;
   padding: 0.85em 1em;
   border-radius: 8px;
-  background: oklch(0.14 0.004 285);
+  background: var(--secondary);
   border: 1px solid var(--border);
   overflow-x: auto;
+  overflow-y: auto;
+  max-height: 16rem;
   font-size: 12.8px;
   line-height: 1.55;
 }
 .mari-md pre code {
   font-family: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
+  color: var(--foreground);
   background: none;
   padding: 0;
 }

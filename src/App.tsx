@@ -2,354 +2,260 @@ import {
   Component,
   useCallback,
   useEffect,
-  useMemo,
   useRef,
   useState,
   type CSSProperties,
   type ReactNode,
 } from "react";
-import { IconArrowDown, IconEdit } from "@tabler/icons-react";
+import { IconEdit } from "@tabler/icons-react";
 import { IconProvider } from "@/lib/icon-context";
-import { ProjectBreadcrumb } from "@/components/chat/ProjectBreadcrumb";
-import { InputMessage } from "@/components/ui/input-message";
 import {
   SidebarInset,
   SidebarProvider,
   SidebarTrigger,
   useSidebar,
 } from "@/components/ui/sidebar";
-import { Conversation } from "@/components/chat/Conversation";
-import { ComposerControls } from "@/components/chat/ComposerControls";
-import { SessionSidebar } from "@/components/chat/SessionSidebar";
 import { SettingsDialog } from "@/components/chat/SettingsDialog";
 import { useSettings } from "@/lib/settings";
-import { useUpdater } from "@/lib/updater";
-import { useAgentSession, type AgentSession } from "@/hooks/useAgentSession";
-import { useChatScroll } from "@/hooks/useChatScroll";
-import { agent } from "@/config";
-import type { SessionSummary } from "@/lib/agent/types";
+import { BoardSidebar } from "@/components/board/BoardSidebar";
+import { ConnectionBanner } from "@/components/board/ConnectionBanner";
+import { RosterEditor } from "@/components/board/RosterEditor";
+import { ThreadList } from "@/components/board/ThreadList";
+import { Welcome } from "@/components/board/Welcome";
+import { TabStrip, type TabDescriptor } from "@/components/board/TabStrip";
+import { ThreadView } from "@/components/board/thread/ThreadView";
+import { DraftThread } from "@/components/board/thread/DraftThread";
+import { useBoard, boardStore } from "@/lib/board/useBoard";
 import { cn } from "@/lib/utils";
 
-// ── Session manager types ────────────────────────────────────────────────────
-// One open session = one tab = one mounted SessionEngine = one CLI process.
-interface TabSpec {
-  cwd?: string;
-  sessionPath?: string;
-  name?: string;
-}
-interface Tab {
+// ── Navigation ───────────────────────────────────────────────────────────────
+// The sidebar drives the persistent board tab (list views); threads open as
+// closable tabs beside it. No router — a desktop app with two view shapes.
+export type Selection =
+  | { view: "inbox" }
+  | { view: "mine" }
+  | { view: "project"; projectId: string };
+
+// One open thread tab. Drafts start without a threadId; the first title
+// keystroke creates the thread and attaches it (see DraftThread).
+interface OpenTab {
   key: string;
-  spec: TabSpec;
-  lastViewed: number;
-}
-interface EngineStatus {
-  sessionFile?: string;
-  cwd?: string;
-  running: boolean;
-  connection: string;
-  sessionName?: string;
-}
-interface EngineActions {
-  rename: (name: string) => void;
+  threadId?: string;
+  draft: boolean;
+  draftProjectId?: string;
 }
 
-// Globally-unique process keys. NOT a module counter: HMR resets module state
-// to 0 while React keeps the existing tabs, so a counter would reissue a key
-// that collides with a live tab — two tabs then match activeKey and both render
-// (the stacked-panes bug). A UUID can never collide across an HMR reload.
 const nextKey = () =>
   typeof crypto !== "undefined" && crypto.randomUUID
     ? crypto.randomUUID()
-    : `s${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+    : `t${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 
-// Warm pool: keep the active tab, every running (streaming) tab, and the last
-// `settings.warmPoolSize` recently-viewed idle tabs alive; reap the rest
-// (unmount → kill process).
+const TABS_KEY = "elan.tabs.v1";
+
+// Reopen last session's thread tabs; drop tabs whose thread is gone and
+// never persist uncreated drafts (they were, by definition, empty).
+function hydrateTabs(): { tabs: OpenTab[]; activeKey: string } {
+  try {
+    const raw = JSON.parse(localStorage.getItem(TABS_KEY) ?? "null") as {
+      threadIds?: string[];
+      activeThreadId?: string | null;
+    } | null;
+    if (!raw?.threadIds) return { tabs: [], activeKey: "board" };
+    const live = new Set(boardStore().getState().threads.map((t) => t.id));
+    const tabs = raw.threadIds
+      .filter((id) => live.has(id))
+      .map((id) => ({ key: nextKey(), threadId: id, draft: false }));
+    const active = tabs.find((t) => t.threadId === raw.activeThreadId);
+    return { tabs, activeKey: active?.key ?? "board" };
+  } catch {
+    return { tabs: [], activeKey: "board" };
+  }
+}
 
 function App() {
   const settings = useSettings();
+  const board = useBoard();
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [selection, setSelection] = useState<Selection>({ view: "inbox" });
+  const [{ tabs, activeKey }, setTabState] = useState(hydrateTabs);
 
-  // Check GitHub Releases for a newer version once, when the app opens (gated
-  // by the auto-check setting). Surfaced as a button above Settings.
-  const updater = useUpdater();
-  const updateCheckedRef = useRef(false);
+  // Sidebar glass (inherited from Mari): pure CSS attribute toggle.
   useEffect(() => {
-    if (settings.autoCheckUpdates && !updateCheckedRef.current) {
-      updateCheckedRef.current = true;
-      void updater.check();
-    }
-  }, [settings.autoCheckUpdates, updater]);
-
-  // Toggle the native sidebar glass: the effect view is always mounted behind
-  // the webview; this attribute turns the sidebar surface transparent so it
-  // shows through. Purely CSS — no native round-trip.
-  useEffect(() => {
-    document.documentElement.dataset.glass = settings.glassSidebar ? "on" : "off";
+    document.documentElement.dataset.glass = settings.glassSidebar
+      ? "on"
+      : "off";
   }, [settings.glassSidebar]);
 
-  // Global on-disk session list (drives the sidebar; grouped by project).
-  // Adapters without a session store just show an empty sidebar list.
-  const [sessions, setSessions] = useState<SessionSummary[]>([]);
-  const refreshNow = useCallback(() => {
-    agent.sessions
-      ?.list()
-      .then(setSessions)
-      .catch(() => {});
-  }, []);
-  // Coalesce bursts (a turn writes the session file several times) into one
-  // scan, so the watcher can fire freely without hammering the disk.
-  const refreshTimer = useRef<number | undefined>(undefined);
-  const refreshSessions = useCallback(() => {
-    if (refreshTimer.current != null) return;
-    refreshTimer.current = window.setTimeout(() => {
-      refreshTimer.current = undefined;
-      refreshNow();
-    }, 120);
-  }, [refreshNow]);
-
   useEffect(() => {
-    refreshNow();
-    // Filesystem watch (desktop) / poll (browser): sessions written by ANY
-    // process — including a terminal agent — sync into the sidebar immediately.
-    const off = agent.sessions?.watch(refreshSessions) ?? (() => {});
-    const onFocus = () => refreshNow();
-    window.addEventListener("focus", onFocus);
-    return () => {
-      off();
-      window.removeEventListener("focus", onFocus);
-    };
-  }, [refreshNow, refreshSessions]);
-
-  // Tabs, the active one, and the status each engine reports up.
-  const firstKeyRef = useRef<string>(undefined);
-  if (!firstKeyRef.current) firstKeyRef.current = nextKey();
-  const [tabs, setTabs] = useState<Tab[]>(() => [
-    { key: firstKeyRef.current!, spec: {}, lastViewed: Date.now() },
-  ]);
-  const [activeKey, setActiveKey] = useState<string>(firstKeyRef.current!);
-  const [statuses, setStatuses] = useState<Record<string, EngineStatus>>({});
-  const actionsRef = useRef<Map<string, EngineActions>>(new Map());
-  const tabsRef = useRef(tabs);
-  tabsRef.current = tabs;
-  const statusesRef = useRef(statuses);
-  statusesRef.current = statuses;
-
-  const reportStatus = useCallback((key: string, status: EngineStatus) => {
-    setStatuses((prev) => {
-      const cur = prev[key];
-      if (
-        cur &&
-        cur.sessionFile === status.sessionFile &&
-        cur.cwd === status.cwd &&
-        cur.running === status.running &&
-        cur.connection === status.connection &&
-        cur.sessionName === status.sessionName
-      )
-        return prev;
-      return { ...prev, [key]: status };
-    });
-  }, []);
-
-  const registerActions = useCallback((key: string, actions: EngineActions) => {
-    actionsRef.current.set(key, actions);
-  }, []);
-
-  // ── tab operations ─────────────────────────────────────────────────────
-  const newTab = useCallback((cwd?: string) => {
-    const key = nextKey();
-    setTabs((prev) => [...prev, { key, spec: { cwd }, lastViewed: Date.now() }]);
-    setActiveKey(key);
-  }, []);
-
-  // `activate: false` prewarms: mount the engine (spawn the process, hydrate
-  // the transcript) without fronting it — hover-to-click latency vanishes.
-  const openSession = useCallback((session: SessionSummary, activate = true) => {
-    const existing = tabsRef.current.find(
-      (t) =>
-        t.spec.sessionPath === session.path ||
-        statusesRef.current[t.key]?.sessionFile === session.path,
-    );
-    if (existing) {
-      if (!activate) return;
-      setActiveKey(existing.key);
-      setTabs((prev) =>
-        prev.map((t) =>
-          t.key === existing.key ? { ...t, lastViewed: Date.now() } : t,
-        ),
+    try {
+      localStorage.setItem(
+        TABS_KEY,
+        JSON.stringify({
+          threadIds: tabs.filter((t) => t.threadId).map((t) => t.threadId),
+          activeThreadId:
+            tabs.find((t) => t.key === activeKey)?.threadId ?? null,
+        }),
       );
-      return;
+    } catch {
+      /* storage disabled */
     }
-    const key = nextKey();
-    setTabs((prev) => [
-      ...prev,
-      {
-        key,
-        spec: { cwd: session.cwd, sessionPath: session.path, name: session.name },
-        lastViewed: Date.now(),
-      },
-    ]);
-    if (activate) setActiveKey(key);
+  }, [tabs, activeKey]);
+
+  // Deleting a project cascades away its threads (deleteProject); prune any
+  // open tab pointing at a thread that's gone rather than leaving it to show
+  // ThreadView's "no longer exists" empty state indefinitely. Draft tabs
+  // (threadId unset until the first title keystroke) are untouched. Bails
+  // out to the same tab-state reference when nothing's stale, so this is a
+  // no-op render on every ordinary board mutation.
+  useEffect(() => {
+    setTabState((prev) => {
+      const live = new Set(board.threads.map((t) => t.id));
+      const staleKeys = new Set(
+        prev.tabs.filter((t) => t.threadId && !live.has(t.threadId)).map((t) => t.key),
+      );
+      if (staleKeys.size === 0) return prev;
+      const tabs = prev.tabs.filter((t) => !staleKeys.has(t.key));
+      const activeKey = staleKeys.has(prev.activeKey) ? "board" : prev.activeKey;
+      return { tabs, activeKey };
+    });
+  }, [board.threads]);
+
+  const openThread = useCallback((threadId: string) => {
+    setTabState((prev) => {
+      const existing = prev.tabs.find((t) => t.threadId === threadId);
+      if (existing) return { ...prev, activeKey: existing.key };
+      const tab: OpenTab = { key: nextKey(), threadId, draft: false };
+      return { tabs: [...prev.tabs, tab], activeKey: tab.key };
+    });
   }, []);
 
-  // Sidebar switch passes a disk path — resolve it to the session record.
-  const switchSession = useCallback(
-    (sessionPath: string) => {
-      const s = sessions.find((x) => x.path === sessionPath);
-      if (s) openSession(s);
-    },
-    [sessions, openSession],
-  );
-
-  // Sidebar hover — boot the engine early so the eventual click is warm.
-  const prewarmSession = useCallback(
-    (sessionPath: string) => {
-      const s = sessions.find((x) => x.path === sessionPath);
-      if (s) openSession(s, false);
-    },
-    [sessions, openSession],
-  );
-
-  const activeCwd =
-    tabs.find((t) => t.key === activeKey)?.spec.cwd ??
-    statuses[activeKey]?.cwd;
-
-  const newSession = useCallback(
-    // Stay in the active session's project; otherwise fall to the configured
-    // default working directory (and finally the engine's home fallback).
-    () => newTab(statusesRef.current[activeKey]?.cwd ?? settings.defaultCwd ?? undefined),
-    [newTab, activeKey, settings.defaultCwd],
-  );
-  const newSessionIn = useCallback((cwd: string) => newTab(cwd), [newTab]);
-
-  const activeKeyRef = useRef(activeKey);
-  activeKeyRef.current = activeKey;
-
-  // Rename any session by disk path: if a live engine holds it, go through RPC
-  // (pi owns that open file); otherwise write the name to disk directly.
-  const renameSessionByPath = useCallback(
-    (path: string, name: string) => {
-      const trimmed = name.trim();
-      if (!trimmed) return;
-      const key = Object.keys(statusesRef.current).find(
-        (k) => statusesRef.current[k].sessionFile === path,
-      );
-      const act = key ? actionsRef.current.get(key) : undefined;
-      if (act) act.rename(trimmed);
-      else
-        void agent.sessions?.rename(path, trimmed).then(() => refreshSessions());
-      refreshSessions();
-    },
-    [refreshSessions],
-  );
-
-  // Delete any session: close its tab (if open) so its process dies, then
-  // remove the file. The fs watcher + refresh drop it from the sidebar.
-  const deleteSessionByPath = useCallback(
-    (path: string) => {
-      const tab = tabsRef.current.find(
-        (t) =>
-          t.spec.sessionPath === path ||
-          statusesRef.current[t.key]?.sessionFile === path,
-      );
-      if (tab) {
-        const remaining = tabsRef.current.filter((t) => t.key !== tab.key);
-        if (remaining.length === 0) {
-          const k = nextKey();
-          setTabs([{ key: k, spec: {}, lastViewed: Date.now() }]);
-          setActiveKey(k);
-        } else {
-          if (activeKeyRef.current === tab.key)
-            setActiveKey(remaining[remaining.length - 1].key);
-          setTabs(remaining);
-        }
-      }
-      void agent.sessions?.delete(path).then(() => refreshSessions());
-      refreshSessions();
-    },
-    [refreshSessions],
-  );
-
-  // ── warm-pool reaping ──────────────────────────────────────────────────
-  useEffect(() => {
-    setTabs((prev) => {
-      if (prev.length <= 1) return prev;
-      const keep = new Set<string>([activeKey]);
-      for (const t of prev) if (statuses[t.key]?.running) keep.add(t.key);
-      const rest = prev
-        .filter((t) => !keep.has(t.key))
-        .sort((a, b) => b.lastViewed - a.lastViewed);
-      for (const t of rest.slice(0, settings.warmPoolSize)) keep.add(t.key);
-      const next = prev.filter((t) => keep.has(t.key));
-      return next.length === prev.length ? prev : next;
+  const requestNewThread = useCallback((projectId?: string) => {
+    setTabState((prev) => {
+      const tab: OpenTab = { key: nextKey(), draft: true, draftProjectId: projectId };
+      return { tabs: [...prev.tabs, tab], activeKey: tab.key };
     });
-  }, [activeKey, statuses, settings.warmPoolSize]);
+  }, []);
 
-  // Drop stale status/action entries for reaped tabs.
-  useEffect(() => {
-    const live = new Set(tabs.map((t) => t.key));
-    for (const k of actionsRef.current.keys())
-      if (!live.has(k)) actionsRef.current.delete(k);
-    setStatuses((prev) => {
-      const next: Record<string, EngineStatus> = {};
-      let changed = false;
-      for (const [k, v] of Object.entries(prev)) {
-        if (live.has(k)) next[k] = v;
-        else changed = true;
+  // A draft's first keystroke created the thread — attach it to the tab.
+  const draftCreated = useCallback((key: string, threadId: string) => {
+    setTabState((prev) => ({
+      ...prev,
+      tabs: prev.tabs.map((t) => (t.key === key ? { ...t, threadId } : t)),
+    }));
+  }, []);
+
+  const closeTab = useCallback((key: string) => {
+    setTabState((prev) => {
+      const idx = prev.tabs.findIndex((t) => t.key === key);
+      if (idx < 0) return prev;
+      const tab = prev.tabs[idx];
+      // Draft discard: a created-but-never-titled thread is junk — remove it.
+      if (tab.draft && tab.threadId) {
+        const t = boardStore()
+          .getState()
+          .threads.find((x) => x.id === tab.threadId);
+        if (!t || !t.title.trim()) boardStore().deleteThread(tab.threadId);
       }
-      return changed ? next : prev;
+      const tabs = prev.tabs.filter((t) => t.key !== key);
+      const activeKey =
+        prev.activeKey !== key
+          ? prev.activeKey
+          : (tabs[idx] ?? tabs[idx - 1])?.key ?? "board";
+      return { tabs, activeKey };
     });
-  }, [tabs]);
+  }, []);
 
-  // Sessions with an in-flight run, by disk path — the sidebar's live dots.
-  const runningPaths = useMemo(() => {
-    const s = new Set<string>();
-    for (const st of Object.values(statuses))
-      if (st.running && st.sessionFile) s.add(st.sessionFile);
-    return s;
-  }, [statuses]);
+  const selectTab = useCallback((key: string) => {
+    setTabState((prev) => ({ ...prev, activeKey: key }));
+  }, []);
+
+  // Sidebar selection always fronts the board tab.
+  const selectView = useCallback((sel: Selection) => {
+    setSelection(sel);
+    setTabState((prev) => ({ ...prev, activeKey: "board" }));
+  }, []);
+
+  // Esc closes the active thread tab (Linear's back, browser's close) —
+  // unless focus is in a field, where Esc belongs to it (mention popover,
+  // draft editors) and closing would risk losing a half-written message.
+  useEffect(() => {
+    if (activeKey === "board") return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || settingsOpen) return;
+      const el = e.target as HTMLElement | null;
+      if (el && (el.tagName === "TEXTAREA" || el.tagName === "INPUT")) return;
+      closeTab(activeKey);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [activeKey, settingsOpen, closeTab]);
+
+  const boardLabel =
+    selection.view === "inbox"
+      ? "Inbox"
+      : selection.view === "mine"
+        ? "My threads"
+        : (board.projects.find((p) => p.id === selection.projectId)?.name ??
+          "Project");
+
+  const descriptors: TabDescriptor[] = tabs.map((t) => {
+    const thread = board.threads.find((x) => x.id === t.threadId);
+    return {
+      key: t.key,
+      title: thread?.title ?? "",
+      status: thread?.status ?? null,
+      running: board.sessions.some(
+        (s) => s.threadId === t.threadId && s.state === "running",
+      ),
+    };
+  });
 
   const activeTab = tabs.find((t) => t.key === activeKey);
-  const activePath =
-    activeTab?.spec.sessionPath ?? statuses[activeKey]?.sessionFile;
 
-  // Recent project directories (unique cwds, recency-ordered), active pinned —
-  // the folder dropdown's list.
-  const recents = useMemo(() => {
-    const seen = new Set<string>();
-    const out: string[] = [];
-    if (activeCwd) {
-      seen.add(activeCwd);
-      out.push(activeCwd);
+  // Onboarding step 2 ("Assemble your team", docs/FRONTEND.md): the first
+  // project's empty board shows the roster editor in onboarding dress, once.
+  // "Start working" dismisses explicitly; navigating anywhere else while it's
+  // up (a draft tab, a filed thread) is the implicit skip — both persist.
+  const [rosterOnboarded, setRosterOnboarded] = useState(() => {
+    try {
+      return localStorage.getItem("elan.onboarding.roster.v1") != null;
+    } catch {
+      return true;
     }
-    for (const s of sessions) {
-      if (s.cwd && !seen.has(s.cwd)) {
-        seen.add(s.cwd);
-        out.push(s.cwd);
-      }
+  });
+  const finishRosterOnboarding = useCallback(() => {
+    try {
+      localStorage.setItem("elan.onboarding.roster.v1", "done");
+    } catch {
+      /* storage disabled */
     }
-    return out;
-  }, [sessions, activeCwd]);
-
-  // Disk title fallback for the breadcrumb thread (before the engine reports).
-  const fallbackThread = useMemo(() => {
-    if (!activePath) return undefined;
-    return sessions.find((s) => s.path === activePath)?.title;
-  }, [sessions, activePath]);
+    setRosterOnboarded(true);
+  }, []);
+  const rosterOnboarding =
+    !rosterOnboarded &&
+    !activeTab &&
+    board.projects.length === 1 &&
+    board.threads.length === 0;
+  const rosterOnboardingSeen = useRef(false);
+  useEffect(() => {
+    if (rosterOnboarding) rosterOnboardingSeen.current = true;
+    else if (rosterOnboardingSeen.current && !rosterOnboarded)
+      finishRosterOnboarding();
+  }, [rosterOnboarding, rosterOnboarded, finishRosterOnboarding]);
 
   // Drag-resizable sidebar width, persisted across launches.
   const [sidebarWidth, setSidebarWidth] = useState(() => {
     try {
-      const n = Number(localStorage.getItem("mari.sidebarWidth"));
-      return Number.isFinite(n) && n > 0 ? Math.min(460, Math.max(220, n)) : 256;
+      const n = Number(localStorage.getItem("elan.sidebarWidth"));
+      return Number.isFinite(n) && n > 0 ? Math.min(460, Math.max(220, n)) : 244;
     } catch {
-      return 256;
+      return 244;
     }
   });
   const handleResize = (w: number) => {
     setSidebarWidth(w);
     try {
-      localStorage.setItem("mari.sidebarWidth", String(w));
+      localStorage.setItem("elan.sidebarWidth", String(w));
     } catch {
       /* storage disabled */
     }
@@ -360,39 +266,59 @@ function App() {
       <SidebarProvider
         style={{ "--sidebar-width": `${sidebarWidth}px` } as CSSProperties}
       >
-        {/* Sidebar toggle (+ new chat) pinned top-left, always beside the
-            traffic lights, over whichever pane is on the left. */}
-        <TitleBar onNewChat={newSession} />
-        <SessionSidebar
-          sessions={sessions}
-          activePath={activePath}
-          runningPaths={runningPaths}
-          onNew={newSession}
-          onNewInProject={newSessionIn}
-          onSwitch={switchSession}
-          onPrewarm={prewarmSession}
-          onRename={renameSessionByPath}
-          onDelete={deleteSessionByPath}
+        <TitleBar onNewThread={() => requestNewThread()} />
+        <BoardSidebar
+          selection={selection}
+          activeThreadId={activeTab?.threadId}
+          onSelect={selectView}
+          onOpenThread={openThread}
+          onNewThread={requestNewThread}
           onResize={handleResize}
           onOpenSettings={() => setSettingsOpen(true)}
-          updater={updater}
         />
         <SidebarInset className="flex h-screen min-w-0 flex-col bg-background text-foreground">
-          {tabs.map((t) => (
-            <EngineBoundary key={t.key} active={t.key === activeKey}>
-              <SessionEngine
-                procKey={t.key}
-                spec={t.spec}
-                active={t.key === activeKey}
-                recents={recents}
-                fallbackThread={t.key === activeKey ? fallbackThread : undefined}
-                onReport={reportStatus}
-                registerActions={registerActions}
-                onActivity={refreshSessions}
-                onSelectProject={newSessionIn}
+          <TabRow
+            boardLabel={boardLabel}
+            tabs={descriptors}
+            activeKey={activeKey}
+            onSelect={selectTab}
+            onClose={closeTab}
+          />
+          <ConnectionBanner />
+          <BoardBoundary resetKey={activeKey + selectionKey(selection)}>
+            {!activeTab ? (
+              board.projects.length === 0 ? (
+                <Welcome
+                  onProjectCreated={(id) =>
+                    selectView({ view: "project", projectId: id })
+                  }
+                />
+              ) : rosterOnboarding ? (
+                <RosterEditor
+                  variant="onboarding"
+                  onDone={finishRosterOnboarding}
+                />
+              ) : (
+                <ThreadList
+                  mode={selection.view}
+                  projectId={
+                    selection.view === "project" ? selection.projectId : undefined
+                  }
+                  onOpenThread={openThread}
+                  onNewThread={requestNewThread}
+                />
+              )
+            ) : activeTab.draft ? (
+              <DraftThread
+                key={activeTab.key}
+                projectId={activeTab.draftProjectId}
+                threadId={activeTab.threadId}
+                onCreated={(threadId) => draftCreated(activeTab.key, threadId)}
               />
-            </EngineBoundary>
-          ))}
+            ) : (
+              <ThreadView threadId={activeTab.threadId!} />
+            )}
+          </BoardBoundary>
         </SidebarInset>
         <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
       </SidebarProvider>
@@ -400,26 +326,67 @@ function App() {
   );
 }
 
-// Isolates a single session: if its subtree throws (a malformed transcript, a
-// bad event), only that session shows a fallback — the sidebar and every other
-// session keep running. Durability over a shared white screen.
-class EngineBoundary extends Component<
-  { active: boolean; children: ReactNode },
+const selectionKey = (s: Selection) =>
+  s.view === "project" ? `p:${s.projectId}` : s.view;
+
+// The tab row sits where a titlebar would: inline with the traffic lights,
+// draggable in its dead space, padded past the fixed toggle cluster when the
+// sidebar is collapsed.
+function TabRow({
+  boardLabel,
+  tabs,
+  activeKey,
+  onSelect,
+  onClose,
+}: {
+  boardLabel: string;
+  tabs: TabDescriptor[];
+  activeKey: string;
+  onSelect: (key: string) => void;
+  onClose: (key: string) => void;
+}) {
+  const { state } = useSidebar();
+  const collapsed = state === "collapsed";
+  const pl = collapsed ? trafficInset() + 66 : 12;
+
+  return (
+    <header
+      data-tauri-drag-region="deep"
+      className="relative z-30 flex h-9 shrink-0 items-center pr-3 select-none"
+      style={{ paddingLeft: pl }}
+    >
+      <TabStrip
+        boardLabel={boardLabel}
+        tabs={tabs}
+        activeKey={activeKey}
+        onSelect={onSelect}
+        onClose={onClose}
+      />
+    </header>
+  );
+}
+
+// One bad thread render must not white-screen the board; remounts on nav.
+class BoardBoundary extends Component<
+  { resetKey: string; children: ReactNode },
   { error: boolean }
 > {
   state = { error: false };
   static getDerivedStateFromError() {
     return { error: true };
   }
+  componentDidUpdate(prev: { resetKey: string }) {
+    if (prev.resetKey !== this.props.resetKey && this.state.error)
+      this.setState({ error: false });
+  }
   componentDidCatch(error: unknown) {
-    console.error("[SessionEngine] crashed:", error);
+    console.error("[Board] crashed:", error);
   }
   render() {
-    if (this.state.error) {
-      if (!this.props.active) return null;
+    if (this.state.error)
       return (
         <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 p-8 text-center text-[13px] text-muted-foreground">
-          <p>This session hit an error and couldn't be shown.</p>
+          <p>This view hit an error and couldn't be shown.</p>
           <button
             onClick={() => this.setState({ error: false })}
             className="rounded-md border border-border px-3 py-1.5 text-foreground transition-colors hover:bg-hover"
@@ -428,242 +395,8 @@ class EngineBoundary extends Component<
           </button>
         </div>
       );
-    }
     return this.props.children;
   }
-}
-
-// ── Session engine ───────────────────────────────────────────────────────────
-// Runs one agent session's hook. Reports status up and (only when it's the
-// active tab) renders the chat surface. Background engines render nothing but
-// keep reducing their event stream, so their agent keeps running off screen.
-function SessionEngine({
-  procKey,
-  spec,
-  active,
-  recents,
-  fallbackThread,
-  onReport,
-  registerActions,
-  onActivity,
-  onSelectProject,
-}: {
-  procKey: string;
-  spec: TabSpec;
-  active: boolean;
-  recents: string[];
-  fallbackThread?: string;
-  onReport: (key: string, status: EngineStatus) => void;
-  registerActions: (key: string, actions: EngineActions) => void;
-  onActivity: () => void;
-  onSelectProject: (cwd: string) => void;
-}) {
-  const session = useAgentSession({
-    adapter: agent,
-    procKey,
-    cwd: spec.cwd,
-    sessionPath: spec.sessionPath,
-    name: spec.name,
-    onActivity,
-  });
-
-  const { identity, streaming, connection, renameSession } = session;
-  useEffect(() => {
-    onReport(procKey, {
-      sessionFile: identity.sessionFile,
-      cwd: identity.cwd,
-      running: streaming,
-      connection,
-      sessionName: identity.sessionName,
-    });
-  }, [
-    procKey,
-    identity.sessionFile,
-    identity.cwd,
-    identity.sessionName,
-    streaming,
-    connection,
-    onReport,
-  ]);
-
-  useEffect(() => {
-    registerActions(procKey, { rename: renameSession });
-  }, [procKey, renameSession, registerActions]);
-
-  if (!active) return null;
-  return (
-    <ChatSurface
-      session={session}
-      spec={spec}
-      recents={recents}
-      fallbackThread={fallbackThread}
-      onSelectProject={onSelectProject}
-    />
-  );
-}
-
-// ── Chat surface ─────────────────────────────────────────────────────────────
-// The visible pane for the active session: breadcrumb header, the transcript
-// (or Cursor-style home), and the composer.
-function ChatSurface({
-  session,
-  spec,
-  recents,
-  fallbackThread,
-  onSelectProject,
-}: {
-  session: AgentSession;
-  spec: TabSpec;
-  recents: string[];
-  fallbackThread?: string;
-  onSelectProject: (cwd: string) => void;
-}) {
-  const [draft, setDraft] = useState("");
-  const [files, setFiles] = useState<File[]>([]);
-  // session.items is a fresh array each streamed update — the revision the
-  // scroll controller re-anchors on.
-  const scroll = useChatScroll(session.streaming, session.items);
-
-  // A resumed session is never "home": its transcript exists on disk and is
-  // already hydrating — rendering the docked-composer layout immediately
-  // avoids the home-composer flash while it loads.
-  const isHome = session.items.length === 0 && !spec.sessionPath;
-  const projectCwd = session.identity.cwd ?? spec.cwd;
-  const threadName =
-    session.identity.sessionName ??
-    fallbackThread ??
-    (session.items.length > 0 ? "Untitled" : "New chat");
-
-  // Home: an interactive folder switcher. Conversation header: display-only.
-  const homeBreadcrumb = (
-    <ProjectBreadcrumb
-      cwd={projectCwd}
-      recents={recents}
-      onSelectProject={onSelectProject}
-    />
-  );
-  const headerBreadcrumb = (
-    <ProjectBreadcrumb
-      cwd={projectCwd}
-      thread={threadName}
-      recents={recents}
-      onSelectProject={onSelectProject}
-      readonly
-    />
-  );
-
-  const disconnectedBanner = session.connection === "disconnected" && (
-    <div className="mb-2 flex items-center justify-between rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-[13px] text-destructive">
-      <span>{agent.name} disconnected.</span>
-      <button
-        onClick={() => void session.restart()}
-        className="rounded-md px-2 py-1 font-medium hover:bg-destructive/15"
-      >
-        Reconnect
-      </button>
-    </div>
-  );
-
-  const composer = (
-    <InputMessage
-      className="border border-border shadow-lg dark:border-transparent dark:shadow-surface-2"
-      value={draft}
-      onValueChange={setDraft}
-      files={files}
-      onFilesChange={setFiles}
-      status={session.streaming ? "streaming" : "idle"}
-      onStop={session.abort}
-      placeholder={isHome ? "Do anything" : `Message ${agent.name}…`}
-      leftSlot={
-        <ComposerControls
-          capabilities={session.capabilities}
-          model={session.model}
-          availableModels={session.availableModels}
-          thinkingLevel={session.thinkingLevel}
-          stats={session.stats}
-          onSelectModel={session.setModelById}
-          onSelectThinking={session.setThinking}
-        />
-      }
-      onSend={(text, sentFiles) => {
-        void session.sendPrompt(text, sentFiles);
-        setDraft("");
-        setFiles([]);
-        scroll.onUserSend();
-      }}
-    />
-  );
-
-  return (
-    <>
-      {/* Top row, inline with the traffic lights: breadcrumb (display-only). */}
-      <ContentHeader breadcrumb={!isHome ? headerBreadcrumb : null} />
-
-      {isHome ? (
-        // Cursor-style home: breadcrumb directly above the centered chat box.
-        <div className="-mt-8 flex min-h-0 flex-1 flex-col items-center justify-center px-6 pb-16">
-          <div className="w-full max-w-[46rem]">
-            <div className="mb-2 px-1">{homeBreadcrumb}</div>
-            {disconnectedBanner}
-            {composer}
-          </div>
-        </div>
-      ) : (
-        <>
-          {/* Conversation */}
-          <div className="relative flex min-h-0 flex-1 flex-col">
-            <div
-              ref={scroll.scrollRef}
-              className="min-h-0 flex-1 overflow-y-auto"
-              style={{ overflowAnchor: "none" }}
-              tabIndex={0}
-            >
-              {/* Bottom-align so short transcripts sit above the composer, and
-                  the reserved spacer sums with content to one viewport — a fresh
-                  turn's whitespace is eaten by the streaming answer rather than
-                  becoming dead, scrollable space below it. */}
-              <div className="flex min-h-full flex-col justify-end">
-                <div ref={scroll.contentRef}>
-                  <Conversation
-                    items={session.items}
-                    streaming={session.streaming}
-                    onAnswer={session.answer}
-                    onExpandTrace={scroll.disengageFollow}
-                  />
-                </div>
-                <div
-                  aria-hidden
-                  style={{
-                    height: scroll.spacerHeight,
-                    overflowAnchor: "none",
-                  }}
-                />
-              </div>
-            </div>
-
-            {/* Jump to latest — fades/scales in when scrolled away. */}
-            <JumpToLatest
-              visible={!scroll.atBottom}
-              onClick={scroll.scrollToLatest}
-            />
-
-            {/* Polite status at message boundaries (not per token). */}
-            <span className="sr-only" role="status" aria-live="polite">
-              {session.streaming ? "Assistant is responding" : ""}
-            </span>
-          </div>
-
-          {/* Composer — docked at the bottom during a conversation. */}
-          <div className="shrink-0 px-6 pb-6 pt-2">
-            <div className="mx-auto w-full max-w-[46rem]">
-              {disconnectedBanner}
-              {composer}
-            </div>
-          </div>
-        </>
-      )}
-    </>
-  );
 }
 
 // The window's traffic-light inset in px (desktop only).
@@ -673,10 +406,9 @@ function trafficInset(): number {
   return isDesktop ? 82 : 10;
 }
 
-// Fixed toggle cluster: sidebar toggle (+ new-chat) pinned to the window's
-// top-left, right beside the traffic lights, no matter the sidebar state. Small
-// and inline with the lights (matches Claude Code / Codex). Draggable.
-function TitleBar({ onNewChat }: { onNewChat: () => void }) {
+// Fixed toggle cluster pinned beside the traffic lights (inherited from Mari):
+// sidebar toggle + new-thread, the latter fading in when the sidebar is closed.
+function TitleBar({ onNewThread }: { onNewThread: () => void }) {
   const { state } = useSidebar();
   const collapsed = state === "collapsed";
 
@@ -687,10 +419,9 @@ function TitleBar({ onNewChat }: { onNewChat: () => void }) {
       style={{ paddingLeft: trafficInset() }}
     >
       <SidebarTrigger className="size-7 shrink-0 rounded-md text-foreground/65 hover:bg-hover hover:text-foreground [&_svg]:size-[16px]" />
-      {/* New chat — fades in when the sidebar is closed. */}
       <button
-        onClick={onNewChat}
-        aria-label="New chat"
+        onClick={onNewThread}
+        aria-label="New thread"
         aria-hidden={!collapsed}
         tabIndex={collapsed ? 0 : -1}
         className={cn(
@@ -705,56 +436,6 @@ function TitleBar({ onNewChat }: { onNewChat: () => void }) {
         <IconEdit size={16} />
       </button>
     </div>
-  );
-}
-
-// The content pane's top row — inline with the traffic lights (h-8). Holds the
-// breadcrumb (project ▸ thread). When the sidebar is closed the fixed toggle
-// cluster overlays this pane's top-left, so pad past it.
-function ContentHeader({ breadcrumb }: { breadcrumb: ReactNode }) {
-  const { state } = useSidebar();
-  const collapsed = state === "collapsed";
-  const pl = collapsed ? trafficInset() + 66 : 20;
-
-  return (
-    <header
-      data-tauri-drag-region="deep"
-      className="relative z-30 flex h-8 shrink-0 items-center gap-2 pr-3 select-none"
-      style={{ paddingLeft: pl }}
-    >
-      <div className="min-w-0 flex-1">{breadcrumb}</div>
-    </header>
-  );
-}
-
-function JumpToLatest({
-  visible,
-  onClick,
-}: {
-  visible: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      aria-label="Jump to latest"
-      aria-hidden={!visible}
-      tabIndex={visible ? 0 : -1}
-      className={cn(
-        "absolute bottom-3 left-1/2 z-10 -translate-x-1/2",
-        "flex h-8 w-8 items-center justify-center rounded-full",
-        "bg-popover text-foreground/80 shadow-lg border border-border",
-        "transition-[transform,opacity] duration-200 ease-[cubic-bezier(0.23,1,0.32,1)] hover:text-foreground",
-        // Enter from just below with a slight scale; exit reverses. Non-
-        // interactive while hidden so it never steals focus or clicks.
-        visible
-          ? "translate-y-0 scale-100 opacity-100"
-          : "pointer-events-none translate-y-2 scale-90 opacity-0",
-      )}
-      style={{ overflowAnchor: "none" }}
-    >
-      <IconArrowDown size={16} />
-    </button>
   );
 }
 

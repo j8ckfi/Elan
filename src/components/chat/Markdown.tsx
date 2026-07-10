@@ -10,9 +10,10 @@ import "highlight.js/styles/github-dark.css";
 import { cn } from "@/lib/utils";
 import { copyText } from "@/lib/copy-text";
 
-// Code block with a hover-revealed copy control. The block keeps the dark
-// (github-dark) palette in both themes, so the button uses fixed light-on-dark
-// colors rather than the theme tokens.
+// Code block with a hover-revealed copy control. The block's background is
+// a theme token (`--secondary`, see index.css's `.mari-md pre`), not a fixed
+// dark palette, so the button uses theme-relative colors too rather than
+// fixed light-on-dark ones.
 function Pre(props: ComponentProps<"pre">) {
   const preRef = useRef<HTMLPreElement>(null);
   const [copied, setCopied] = useState(false);
@@ -34,10 +35,10 @@ function Pre(props: ComponentProps<"pre">) {
         aria-label={copied ? "Copied" : "Copy code"}
         className={cn(
           "absolute top-1.5 right-1.5 flex size-6 cursor-pointer items-center justify-center rounded-md",
-          "text-white/50 hover:bg-white/10 hover:text-white/90 active:scale-95",
+          "text-foreground/50 hover:bg-foreground/10 hover:text-foreground/90 active:scale-95",
           "transition-[color,background-color,opacity,transform] duration-100",
           "opacity-0 group-hover/pre:opacity-100 focus-visible:opacity-100",
-          copied && "opacity-100 text-white/90",
+          copied && "opacity-100 text-foreground/90",
         )}
       >
         {copied ? <IconCheck size={13} /> : <IconCopy size={13} />}

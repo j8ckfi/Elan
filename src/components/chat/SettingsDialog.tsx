@@ -12,6 +12,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
+import { RosterEditor } from "@/components/board/RosterEditor";
 import {
   useSettings,
   useSettingsActions,
@@ -87,6 +88,13 @@ export function SettingsDialog({
                 }
               />
             </Field>
+          </Section>
+
+          {/* ── Agents ──────────────────────────────────────────────── */}
+          {/* The roster editor (docs/FRONTEND.md "The roster editor") in its
+              settings dressing — detection re-probes on every dialog open. */}
+          <Section title="Agents">
+            <RosterEditor variant="settings" />
           </Section>
 
           {/* ── Models ──────────────────────────────────────────────── */}

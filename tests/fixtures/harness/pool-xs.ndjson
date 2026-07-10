@@ -1,0 +1,3 @@
+{"thought":"pong","type":"thought"}
+{"args":{"success":true},"name":"exit","type":"toolCall"}
+{"result":"","type":"toolCallResult"}

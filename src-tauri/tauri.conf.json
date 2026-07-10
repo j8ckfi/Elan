@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Mari",
-  "version": "0.1.8",
-  "identifier": "com.mari.desktop",
+  "productName": "Elan",
+  "version": "0.1.0",
+  "identifier": "app.elan.desktop",
   "build": {
     "beforeDevCommand": "bun run dev",
     "devUrl": "http://localhost:1420",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "Mari",
+        "title": "Elan",
         "width": 1040,
         "height": 760,
         "minWidth": 640,
@@ -45,9 +45,9 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEU4NDkxOEI1MTFFNUNBMjQKUldRa3l1VVJ0UmhKNkhPcFpZUml1MERJWmc5WXRTanFLb0YxcDFvSjNKZ1c3QUdyTDFLVkhUK0sK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDQ1NEVGRkZEMDYxRTZDOQpSV1RKNW1IUS8rOVVCTWhBRTRWWU5DQ2xKZHd5UGtrRUsvS0k2MnlVR2tVUXVzWkQ4a0xuOEx0aQo=",
       "endpoints": [
-        "https://github.com/j8ckfi/Mari/releases/latest/download/latest.json"
+        "https://github.com/j8ckfi/Elan/releases/latest/download/latest.json"
       ]
     }
   }

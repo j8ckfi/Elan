@@ -1,0 +1,2 @@
+{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentCapabilities":{"loadSession":true}}}
+{"jsonrpc":"2.0","id":2,"result":{"sessionId":"session-8f2c1a","configOptions":[{"id":"model","name":"Model","currentValue":"poolside-core-2","options":[{"value":"poolside-core-2","label":"Poolside Core 2"},{"value":"poolside-swe-1.5","label":"Poolside SWE 1.5"}]},{"id":"mode","name":"Mode","currentValue":"default","options":[{"value":"default","label":"Default"}]}]}}

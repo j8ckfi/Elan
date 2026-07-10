@@ -39,7 +39,7 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: ${{ github.ref_name }}
-          releaseName: "Mari ${{ github.ref_name }}"
+          releaseName: "Elan ${{ github.ref_name }}"
           releaseBody: "Download the `.dmg` to install. Auto-updates handle subsequent versions."
           releaseDraft: false
           prerelease: false

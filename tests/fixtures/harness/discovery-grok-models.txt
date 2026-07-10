@@ -1,0 +1,12 @@
+ ██████╗ ██████╗  ██████╗ ██╗  ██╗
+██╔════╝ ██╔══██╗██╔═══██╗██║ ██╔╝
+██║  ███╗██████╔╝██║   ██║█████╔╝
+╚██████╔╝██║  ██║╚██████╔╝██║  ██╗
+
+Grok CLI
+
+You are logged in as someone@example.com
+
+Available models:
+  * grok-4-fast (default)
+  - grok-4.5

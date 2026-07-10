@@ -1,41 +1,26 @@
 # AGENTS.md — read this first
 
-Mari is a desktop frontend for **agent CLIs**. It ships wired to
-[Pi](https://www.npmjs.com/package/@earendil-works/pi-coding-agent), but the
-repo's real objective is to be **the easiest possible way to put a polished
-face on ANY agent CLI that has a programmatic/JSONL mode**: fork → write one
-adapter file → go.
+Elan is a **singleplayer agent orchestrator** shaped like Linear crossed with
+Slack: an issue tracker where the assignees are your model subscriptions. You
+don't chat with agents — you file work, tag agents into it, and the board is
+the interface. This repo is a fork of
+[Mari](https://github.com/j8ckfi/Mari), a desktop frontend for agent CLIs; it
+keeps Mari's adapter/host core intact and replaces the chat shell with the
+board.
 
 If you're an agent (or human) dropped in blind, this file is the map. Deep
 dives live in `docs/`:
 
 | Doc | What it covers |
 | --- | --- |
-| [docs/ADAPTERS.md](docs/ADAPTERS.md) | **The one seam.** How to point Mari at a new agent CLI, step by step. |
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Dataflow, session model, the two runtimes, the hosts, invariants. |
-| [docs/FRONTEND.md](docs/FRONTEND.md) | The design system: shape, motion, surfaces, component landmarks. |
+| [docs/ELAN.md](docs/ELAN.md) | **Start here.** The product, the kernel, the glossary, locked design decisions. |
+| [docs/DATA-MODEL.md](docs/DATA-MODEL.md) | Entities and the store contract. |
+| [docs/ORCHESTRATION.md](docs/ORCHESTRATION.md) | Tag → spawn, the `elan` CLI, worktrees. |
+| [docs/FRONTEND.md](docs/FRONTEND.md) | Elan's design language: shape, motion, surfaces, component landmarks. |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Inherited from Mari. Dataflow, session model, the two runtimes, the hosts, invariants. |
+| [docs/ADAPTERS.md](docs/ADAPTERS.md) | Inherited from Mari. **The one seam.** How to point Elan at a new agent CLI, step by step. |
 
 ---
-
-## Forking: what to change, what to keep
-
-- **Change `src/config.ts`** — the fork knob. Import your adapter, set `agent`.
-- **Write your adapter in `src/lib/adapters/<your-cli>/`** — copy
-  `src/lib/adapters/mock/` (smallest complete example) and follow
-  [docs/ADAPTERS.md](docs/ADAPTERS.md). `pi/` is the full-featured reference,
-  `claude-code/` a second real-world example.
-- **Rewrite [docs/FRONTEND.md](docs/FRONTEND.md)** — this is important and
-  easy to get wrong: FRONTEND.md documents *Mari's* design taste (its radii,
-  motion rules, restraint). It is **not gospel for your fork** — it's the
-  design contract agents working on *this* repo follow. When you fork and
-  develop your own look, **replace that file with your own design language**,
-  so agents building your fork follow *your* rules instead of inheriting
-  Mari's. A fork that keeps FRONTEND.md unedited will forever get PRs that
-  look like Mari.
-- **Keep `src/lib/agent/`** — the neutral core (view model, reducer,
-  transports, engine hook). It's backend-agnostic by construction; if you find
-  yourself editing it to make your CLI fit, the change probably belongs in
-  your adapter. Genuine gaps in the contract → extend the core, add a test.
 
 ## The shape of the system
 
@@ -67,7 +52,7 @@ dives live in `docs/`:
 
 - **UI-only work:** `bun run dev` (Vite :1420) + `bun dev/pi-bridge.ts`
   (WS bridge :4317, spawns one CLI child per session). Fast, no Rust rebuild.
-  `.claude/launch.json` has a `mari-preview` config (port 5199) for the
+  `.claude/launch.json` has an `elan-preview` config (port 5199) for the
   Claude Preview MCP.
 - **No backend at all:** open `/?agent=mock` — the mock adapter streams a
   scripted response with zero external dependencies. Ideal for pure UI work
@@ -125,7 +110,7 @@ CI (`.github/workflows/ci.yml`) runs all four. House rules:
   scrolling in the desktop app. Offcanvas sidebar content may be unmounted
   while collapsed; toggle it open before asserting on it.
 - **Commit identity:** commits in this repo use
-  `git -c user.name="Mari" -c user.email="dovakinvsalduin444444@gmail.com"`.
+  `git -c user.name="Elan" -c user.email="dovakinvsalduin444444@gmail.com"`.
 - **Foreground `sleep` is blocked** in the agent harness; use background tasks
   / until-loops to wait on conditions.
 
@@ -134,11 +119,11 @@ CI (`.github/workflows/ci.yml`) runs all four. House rules:
 ```sh
 bun run tauri build
 # quit running app, replace the bundle, relaunch:
-osascript -e 'tell application "Mari" to quit'
-rm -rf /Applications/Mari.app
-cp -R "src-tauri/target/release/bundle/macos/Mari.app" /Applications/Mari.app
+osascript -e 'tell application "Elan" to quit'
+rm -rf /Applications/Elan.app
+cp -R "src-tauri/target/release/bundle/macos/Elan.app" /Applications/Elan.app
 killall Dock          # refresh the dock icon
-open /Applications/Mari.app
+open /Applications/Elan.app
 ```
 
 `tauri dev` runs a bare binary (no bundle), so the dock icon only reflects a
