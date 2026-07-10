@@ -7,7 +7,7 @@
 //
 // Config via env: ELAN_HOST_PORT (4519), ELAN_STATE_DIR (./.elan),
 // ELAN_MAX_SESSIONS (4), ELAN_SESSION_TIMEOUT_MS (30 min),
-// ELAN_THREAD_BUDGET (8 starts / rolling 10 min), ELAN_SPAWN_ENV_EXTRA
+// ELAN_THREAD_BUDGET (opt-in breaker, default uncapped), ELAN_SPAWN_ENV_EXTRA
 // (comma-separated var names forwarded to children). The contract is
 // docs/ORCHESTRATION.md — the "Durability architecture" section especially;
 // tests boot this in-process via startHost() (auto-start only under
@@ -24,7 +24,7 @@
 //      stderr tail is secondary. Full transcript → .elan/sessions/<id>.log.
 //   4. Environment is built, not inherited — login-shell probe, strip-list,
 //      shim-first PATH with static fallbacks, TERM=dumb, our ELAN_*.
-//   5. Limits — ELAN_MAX_SESSIONS concurrent, per-thread start budget,
+//   5. Limits — ELAN_MAX_SESSIONS concurrent, opt-in per-thread budget,
 //      ELAN_SESSION_TIMEOUT_MS with SIGTERM → 10s → SIGKILL.
 //   6. Preflight before spawn — runner binary resolved on the CHILD's PATH;
 //      GET /api/doctor (v2) reports per-harness bin/found/path/version/auth/
@@ -1420,7 +1420,7 @@ export interface StartHostOptions {
   maxSessions?: number;
   /** Overrides ELAN_SESSION_TIMEOUT_MS (default 30 min). */
   sessionTimeoutMs?: number;
-  /** Overrides ELAN_THREAD_BUDGET (default 8 starts / rolling 10 min). */
+  /** Overrides ELAN_THREAD_BUDGET (default 0 = uncapped; >0 opts into the breaker). */
   threadBudget?: number;
   /** /api/doctor runs `<bin> --version` on found binaries (default true).
    *  Tests pass false — fixtures only, never the real harness CLIs. */
@@ -1468,7 +1468,11 @@ export function startHost(opts: StartHostOptions = {}): ElanHost {
   const maxSessions = opts.maxSessions ?? intEnv(process.env.ELAN_MAX_SESSIONS, 4);
   const sessionTimeoutMs =
     opts.sessionTimeoutMs ?? intEnv(process.env.ELAN_SESSION_TIMEOUT_MS, 30 * 60 * 1000);
-  const threadBudget = opts.threadBudget ?? intEnv(process.env.ELAN_THREAD_BUDGET, 8);
+  // Uncapped by default: agent-to-agent chains are the product working as
+  // designed — sessions self-terminate, the concurrency cap bounds load, and
+  // the board makes every chain visible (the human is the circuit breaker).
+  // Set ELAN_THREAD_BUDGET to a positive number to opt into the breaker.
+  const threadBudget = opts.threadBudget ?? intEnv(process.env.ELAN_THREAD_BUDGET, 0);
   const probeVersions = opts.probeVersions ?? true;
   const probeDiscovery = opts.probeDiscovery ?? true;
   const bootedAt = Date.now();
@@ -2250,7 +2254,7 @@ export function startHost(opts: StartHostOptions = {}): ElanHost {
       );
       if (waiting) {
         if (children.has(waiting.id)) continue; // armed but still exiting — next pass
-        if (threadStartCount(ev.threadId, now) >= threadBudget) {
+        if (threadBudget > 0 && threadStartCount(ev.threadId, now) >= threadBudget) {
           budgetDrop(ev, handle);
           continue;
         }
@@ -2266,7 +2270,7 @@ export function startHost(opts: StartHostOptions = {}): ElanHost {
         continue;
       }
 
-      if (threadStartCount(ev.threadId, now) >= threadBudget) {
+      if (threadBudget > 0 && threadStartCount(ev.threadId, now) >= threadBudget) {
         budgetDrop(ev, handle);
         continue;
       }
@@ -2329,7 +2333,7 @@ export function startHost(opts: StartHostOptions = {}): ElanHost {
         triggerId = post?.id;
       }
       if (!triggerId) continue;
-      if (threadStartCount(s.threadId, now) >= threadBudget) {
+      if (threadBudget > 0 && threadStartCount(s.threadId, now) >= threadBudget) {
         failSession(s, "budget-exceeded",
           `⚠︎ spawn budget exceeded (agent mention loop?) — @${s.handle}'s wake was dropped.`);
         continue;
@@ -2719,7 +2723,7 @@ export function startHost(opts: StartHostOptions = {}): ElanHost {
   say(`[host] state file: ${stateFile}`);
   say(`[host] elan shim:  ${shimPath}`);
   say(
-    `[host] limits: ${maxSessions} concurrent, ${threadBudget} starts/${Math.round(
+    `[host] limits: ${maxSessions} concurrent, ${threadBudget > 0 ? threadBudget : "uncapped"} starts/${Math.round(
       BUDGET_WINDOW_MS / 60_000,
     )}min/thread, ${Math.round(sessionTimeoutMs / 60_000)}min timeout`,
   );

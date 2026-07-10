@@ -356,7 +356,7 @@ describe("tag → spawn (mock harness)", () => {
       const done = await pollUntil(async () => {
         const s = await getState(host);
         return s.sessions.find((x) => x.id === armed.id && x.state === "done");
-      }, "the woken session to finish");
+      }, "the woken session to finish", 45_000); // wake rides two spawn cycles — generous under parallel-suite CPU contention
 
       const state = await getState(host);
       const outcomes = state.events
@@ -543,6 +543,27 @@ describe("durable intent across restarts", () => {
 // ── 4. limits: the per-thread budget breaker ────────────────────────────────
 
 describe("per-thread spawn budget", () => {
+  test("UNCAPPED by default — agent chains are the product, not a bug", async () => {
+    const host = boot(); // no ELAN_THREAD_BUDGET, no threadBudget override
+    const { thread } = await makeThread(host, "Uncapped");
+    for (let i = 0; i < 3; i++) {
+      await req(host, "POST", "/api/posts", {
+        threadId: thread.id,
+        author: "user",
+        body: `@demo-bot go ${i}`,
+      });
+    }
+    // Every tag must be claimed by a real session or an absorbed marker —
+    // never a budget drop.
+    await pollUntil(async () => {
+      const s = await getState(host);
+      return s.sessions.filter((x) => x.handle === "demo-bot").length >= 3;
+    });
+    const s = await getState(host);
+    expect(s.sessions.some((x) => x.reason === "budget-exceeded")).toBe(false);
+    expect(s.posts.some((p) => p.body.includes("spawn budget"))).toBe(false);
+  });
+
   test(
     "the tag past the budget is dropped with an error session + one ⚠︎ post",
     async () => {

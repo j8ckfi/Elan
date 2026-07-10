@@ -244,11 +244,14 @@ event stream while the host surfaced stderr noise). The rules:
    PATH dirs) minus `CLAUDECODE`/`CLAUDE_CODE_*`/`ELAN_*`, plus the shim
    dir on PATH, `TERM=dumb`, our `ELAN_*`, stdin ignored.
 5. **Limits.** `ELAN_MAX_SESSIONS` (default 4) concurrent — excess stays
-   `queued`. Per-thread budget: 8 session starts per rolling 10 minutes —
-   the mention-loop breaker; beyond it the tag is dropped with an ⚠︎ post.
-   `ELAN_SESSION_TIMEOUT_MS` (default 30 min): SIGTERM → 10s → SIGKILL,
-   reason `timeout`. All children die with the host (tracked + killed on
-   shutdown).
+   `queued`. `ELAN_SESSION_TIMEOUT_MS` (default 30 min): SIGTERM → 10s →
+   SIGKILL, reason `timeout`. All children die with the host (tracked +
+   killed on shutdown). The per-thread spawn budget is **uncapped by
+   default** — agent-to-agent chains are the product working as designed:
+   sessions self-terminate, the concurrency cap bounds load, and the board
+   makes every chain visible (the human is the circuit breaker). It bit a
+   real three-agent workflow at 8-per-10min and was demoted on 2026-07-10;
+   set `ELAN_THREAD_BUDGET` to a positive number to opt back in.
 6. **Preflight before spawn.** Runner binary resolved on the CHILD's PATH
    (`runner-not-found` error session + ⚠︎ post, no spawn attempt, when
    missing). `GET /api/doctor` reports per-harness bin/found/path/version
