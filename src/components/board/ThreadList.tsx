@@ -3,25 +3,12 @@
 // See docs/FRONTEND.md "Thread list".
 
 import { useMemo } from "react";
-import {
-  AvatarStack,
-  STATUS_META,
-  StatusGlyph,
-} from "@/components/board/glyphs";
+import { AvatarStack } from "@/components/board/glyphs";
 import { useBoard } from "@/lib/board/useBoard";
 import { relativeTime } from "@/lib/relative-time";
-import type { Author, Project, RosterEntry, Thread, ThreadStatus } from "@/lib/board/types";
+import type { Author, Project, RosterEntry, Thread } from "@/lib/board/types";
 import { USER } from "@/lib/board/types";
 import { cn } from "@/lib/utils";
-
-// Board-list group order — not the union's declaration order.
-const GROUP_ORDER: ThreadStatus[] = [
-  "in_progress",
-  "in_review",
-  "todo",
-  "done",
-  "canceled",
-];
 
 export interface ThreadListProps {
   mode: "inbox" | "mine" | "project";
@@ -48,15 +35,6 @@ export function ThreadList({ mode, projectId, onOpenThread, onNewThread }: Threa
           : board.threads;
     return [...base].sort((a, b) => b.updatedAt - a.updatedAt);
   }, [board.threads, mode, projectId]);
-
-  const groups = useMemo(
-    () =>
-      GROUP_ORDER.map((status) => ({
-        status,
-        items: threads.filter((t) => t.status === status),
-      })).filter((g) => g.items.length > 0),
-    [threads],
-  );
 
   const runningThreadIds = useMemo(
     () => new Set(board.sessions.filter((s) => s.state === "running").map((s) => s.threadId)),
@@ -118,26 +96,17 @@ export function ThreadList({ mode, projectId, onOpenThread, onNewThread }: Threa
             </button>
           </div>
         ) : (
-          groups.map((g) => (
-            <div key={g.status}>
-              <div className="sticky top-0 z-10 flex h-8 items-center gap-2 bg-background/95 px-4 backdrop-blur">
-                <StatusGlyph status={g.status} size={14} />
-                <span className="text-[13px] text-foreground">{STATUS_META[g.status].label}</span>
-                <span className="text-[12px] tabular-nums text-muted-foreground">{g.items.length}</span>
-              </div>
-              {g.items.map((t) => (
-                <ThreadRow
-                  key={t.id}
-                  thread={t}
-                  project={projectsById.get(t.projectId)}
-                  showProjectChip={showProjectChip}
-                  running={runningThreadIds.has(t.id)}
-                  participants={participantsByThread.get(t.id) ?? []}
-                  roster={board.roster}
-                  onOpen={() => onOpenThread(t.id)}
-                />
-              ))}
-            </div>
+          threads.map((t) => (
+            <ThreadRow
+              key={t.id}
+              thread={t}
+              project={projectsById.get(t.projectId)}
+              showProjectChip={showProjectChip}
+              running={runningThreadIds.has(t.id)}
+              participants={participantsByThread.get(t.id) ?? []}
+              roster={board.roster}
+              onOpen={() => onOpenThread(t.id)}
+            />
           ))
         )}
       </div>
@@ -167,7 +136,6 @@ function ThreadRow({
       onClick={onOpen}
       className="flex h-9 cursor-default items-center gap-2 px-4 transition-colors duration-100 hover:bg-hover"
     >
-      <StatusGlyph status={thread.status} size={16} className="shrink-0" />
       <span className="shrink-0 text-[12px] tabular-nums text-muted-foreground">
         {project ? `${project.key}-${thread.number}` : thread.number}
       </span>

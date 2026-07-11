@@ -203,7 +203,6 @@ function App() {
     return {
       key: t.key,
       title: thread?.title ?? "",
-      status: thread?.status ?? null,
       running: board.sessions.some(
         (s) => s.threadId === t.threadId && s.state === "running",
       ),

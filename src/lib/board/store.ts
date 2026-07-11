@@ -47,9 +47,7 @@ export interface BoardStore {
   }): Thread;
   updateThread(
     id: string,
-    patch: Partial<
-      Pick<Thread, "title" | "body" | "status" | "labels" | "worktreePath">
-    >,
+    patch: Partial<Pick<Thread, "title" | "body" | "labels" | "worktreePath">>,
     actor: Author,
   ): void;
   /** Removes the thread and all its posts/events/sessions. Emits no event. */
@@ -179,7 +177,6 @@ export function createBoardStore({ initial, persist }: BoardStoreOptions): Board
         number,
         title: input.title,
         body: input.body,
-        status: "todo",
         labels: [],
         createdBy,
         createdAt: now,
@@ -201,27 +198,13 @@ export function createBoardStore({ initial, persist }: BoardStoreOptions): Board
       return thread;
     },
 
-    updateThread(id, patch, actor) {
+    updateThread(id, patch, _actor) {
       const thread = state.threads.find((t) => t.id === id);
       if (!thread) return;
-      const now = Date.now();
-      const updated: Thread = { ...thread, ...patch, updatedAt: now };
-
-      const events: BoardEvent[] = [];
-      if (patch.status !== undefined && patch.status !== thread.status) {
-        events.push({
-          id: nextId(),
-          threadId: id,
-          actor,
-          type: "status",
-          payload: { from: thread.status, to: patch.status },
-          at: now,
-        });
-      }
+      const updated: Thread = { ...thread, ...patch, updatedAt: Date.now() };
       setState({
         ...state,
         threads: state.threads.map((t) => (t.id === id ? updated : t)),
-        events: [...state.events, ...events],
       });
     },
 
@@ -345,11 +328,9 @@ export function normalizeState(parsed: Partial<BoardState>): BoardState {
   const num = (v: unknown): v is number =>
     typeof v === "number" && Number.isFinite(v);
 
-  const VALID_STATUS = new Set(["todo", "in_progress", "in_review", "done", "canceled"]);
   const threads = arr<Thread>(parsed.threads).filter(
     (t) =>
       rec(t) && str(t.id) && str(t.projectId) && str(t.title) &&
-      str(t.status) && VALID_STATUS.has(t.status) &&
       num(t.createdAt) && num(t.updatedAt),
   );
   const threadIds = new Set(threads.map((t) => t.id));

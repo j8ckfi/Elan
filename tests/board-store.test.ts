@@ -1,6 +1,6 @@
 // Board store contract — the rules docs/DATA-MODEL.md says the store (not
-// callers) enforces: status events, reply flattening, mention tagging,
-// updatedAt bumps, and localStorage hydrate-or-seed persistence.
+// callers) enforces: reply flattening, mention tagging, updatedAt bumps,
+// and localStorage hydrate-or-seed persistence.
 
 import { beforeEach, describe, expect, test } from "bun:test";
 import { createBoardStore, createLocalStore } from "@/lib/board/store";
@@ -41,36 +41,18 @@ function seededStore() {
 }
 
 describe("updateThread", () => {
-  test("a status change emits the status event itself", () => {
+  test("patches fields and emits no events (statuses were removed 2026-07-11)", () => {
     const store = seededStore();
     const project = store.getState().projects[0];
     const thread = store.createThread({ projectId: project.id, title: "t", body: "b" });
+    const eventsBefore = store.getState().events.length;
 
-    store.updateThread(thread.id, { status: "in_progress" }, "user");
+    store.updateThread(thread.id, { title: "renamed", labels: ["x"] }, "user");
 
-    const events = store
-      .getState()
-      .events.filter((e) => e.threadId === thread.id && e.type === "status");
-    expect(events).toHaveLength(1);
-    expect(events[0]).toMatchObject({
-      actor: "user",
-      payload: { from: "todo", to: "in_progress" },
-    });
-    expect(store.getState().threads.find((t) => t.id === thread.id)?.status).toBe(
-      "in_progress",
-    );
-  });
-
-  test("a no-op patch (same status) emits nothing", () => {
-    const store = seededStore();
-    const project = store.getState().projects[0];
-    const thread = store.createThread({ projectId: project.id, title: "t", body: "b" });
-
-    store.updateThread(thread.id, { status: "todo" }, "user");
-
-    expect(
-      store.getState().events.filter((e) => e.threadId === thread.id && e.type === "status"),
-    ).toHaveLength(0);
+    const updated = store.getState().threads.find((t) => t.id === thread.id)!;
+    expect(updated.title).toBe("renamed");
+    expect(updated.labels).toEqual(["x"]);
+    expect(store.getState().events).toHaveLength(eventsBefore);
   });
 });
 
@@ -182,7 +164,6 @@ describe("seed data — flagship exchange", () => {
       t.title.startsWith("Memory engram geometry"),
     )!;
     expect(thread).toBeDefined();
-    expect(thread.status).toBe("in_progress");
 
     const threadPosts = state.posts.filter((p) => p.threadId === thread.id);
     const exchanges = toExchanges(threadPosts);
@@ -345,6 +326,7 @@ describe("localStorage persistence", () => {
   // `attachments` and event types this build no longer knows — hydration
   // must normalize (drop/default), never crash the render downstream.
   test("normalizes stale-shaped records on hydrate instead of crashing", () => {
+    // `status` is a status-era leftover — hydration must shrug it off.
     const t = { id: "t1", projectId: "p1", number: 1, title: "stale", body: "b",
       status: "in_progress", labels: ["x"], createdBy: "user", createdAt: 1, updatedAt: 2 };
     localStorage.setItem(
@@ -352,7 +334,7 @@ describe("localStorage persistence", () => {
       JSON.stringify({
         projects: [{ id: "p1", key: "ENG", name: "Engram", repoPath: "/x", color: "#fff", createdAt: 1 }],
         roster: [{ handle: "gpt-5.6", harness: "codex", color: "#0f9d8f" }, { broken: true }],
-        threads: [t, { id: "half-a-thread" }, { ...t, id: "t2", status: "priority-era" }],
+        threads: [t, { id: "half-a-thread" }],
         posts: [
           { id: "po1", threadId: "t1", author: "gpt-5.6", body: "no attachments field", createdAt: 3 },
           { id: "po2", threadId: "gone-thread", author: "user", body: "orphan", createdAt: 4, attachments: [] },

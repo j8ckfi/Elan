@@ -1,42 +1,75 @@
 // The content pane's tab row: one persistent board tab (follows the sidebar
 // selection) + one closable tab per open thread. Built on FF's TabsSubtle in
-// activeLabel mode — unselected tabs collapse to their status glyph, which
-// doubles as the working indicator (gradient-spin while a session runs).
+// activeLabel mode. The tab bar is the ONLY place the brand gradient lives:
+// every thread tab carries the working grid — still and grey while nothing
+// runs, the animated gradient while a session works the thread.
 
 import { useMemo } from "react";
 import { IconInbox } from "@tabler/icons-react";
 import { GradientSpin } from "gradient-spin";
 import { TabsSubtle, TabsSubtleItem } from "@/components/ui/tabs-subtle";
 import type { IconComponentProps } from "@/lib/icon-map";
-import { StatusGlyph } from "./glyphs";
-import type { ThreadStatus } from "@/lib/board/types";
+import { cn } from "@/lib/utils";
 
 export interface TabDescriptor {
   key: string;
   title: string;
-  /** null = uncreated draft; renders as todo. */
-  status: ThreadStatus | null;
   running: boolean;
 }
 
-// Stable per-(status, running) icon components — TabsSubtleItem measures its
+// GradientSpin's geometry, frozen: the same 3×3 grid, every cell resting
+// grey in the system color. The idle state of the brand mark.
+const GRID = { rows: 3, cols: 3, cellSize: 3, cellGap: 1.5, cellRadius: 1 };
+
+function StillGrid({ className }: { className?: string }) {
+  const { rows, cols, cellSize, cellGap, cellRadius } = GRID;
+  const side = (n: number) => n * cellSize + (n - 1) * cellGap;
+  const cells = [];
+  for (let r = 0; r < rows; r++)
+    for (let c = 0; c < cols; c++)
+      cells.push(
+        <rect
+          key={`${r}-${c}`}
+          x={c * (cellSize + cellGap)}
+          y={r * (cellSize + cellGap)}
+          width={cellSize}
+          height={cellSize}
+          rx={cellRadius}
+          fill="currentColor"
+          opacity={0.35}
+        />,
+      );
+  return (
+    <svg
+      width={side(cols)}
+      height={side(rows)}
+      viewBox={`0 0 ${side(cols)} ${side(rows)}`}
+      className={cn("text-muted-foreground", className)}
+      aria-hidden
+    >
+      {cells}
+    </svg>
+  );
+}
+
+// Stable per-running-state icon components — TabsSubtleItem measures its
 // children, so identity churn would remount SVGs every render for nothing.
 const threadIconCache = new Map<string, React.ComponentType<IconComponentProps>>();
-function threadIcon(status: ThreadStatus | null, running: boolean) {
-  const k = `${status ?? "draft"}:${running}`;
+function threadIcon(running: boolean) {
+  const k = String(running);
   let Icon = threadIconCache.get(k);
   if (!Icon) {
     Icon = function ThreadTabIcon({ className }: IconComponentProps) {
       if (running)
         return (
           <GradientSpin
-            cellSize={3}
-            cellGap={1.5}
+            cellSize={GRID.cellSize}
+            cellGap={GRID.cellGap}
             label="Working"
             className={className}
           />
         );
-      return <StatusGlyph status={status ?? "todo"} size={14} className={className} />;
+      return <StillGrid className={className} />;
     };
     threadIconCache.set(k, Icon);
   }
@@ -76,7 +109,7 @@ export function TabStrip({
         <TabsSubtleItem
           key={t.key}
           index={i + 1}
-          icon={threadIcon(t.status, t.running)}
+          icon={threadIcon(t.running)}
           label={t.title || "New thread"}
           title={t.title || "New thread"}
           onClose={() => onClose(t.key)}

@@ -61,9 +61,11 @@ inline with the traffic lights (h-9, drag region in dead space):
   clicking a sidebar item fronts it.
 - **One tab per open thread.** Unselected tabs collapse to their icon; the
   selected tab expands its title (FF's animated label collapse).
-- **The tab icon is the thread's status pie** (StatusGlyph — it literally is
-  a progress bar), swapped for a 12px `gradient-spin` matrix while any
-  session in that thread is running. The strip doubles as the fleet monitor.
+- **The tab icon is the working grid** — the brand's 3×3 matrix. Still and
+  grey (`StillGrid`, currentColor at low opacity) while nothing runs; the
+  animated `gradient-spin` while any session in that thread is running. The
+  strip doubles as the fleet monitor, and it is the ONLY place the gradient
+  appears — everything else in the app is system monochrome.
 - Close: the selected tab carries ✕ after its label; unselected (icon-only)
   tabs close via middle-click or select-then-✕ — the pinned-tab pattern.
   (Hover-✕-replaces-icon was tried and rejected: it covers a collapsed
@@ -120,7 +122,7 @@ detection.
 - **Available on this machine** (below): one row per registry harness,
   populating PROGRESSIVELY as doctor probes land — this is the magic and it
   must feel alive without being noisy: each row starts as mark + name +
-  small `gradient-spin` (it IS "process live now"), resolves to version +
+  small shimmer-text "Probing…" label, resolves to version +
   auth state ("v2.1.197 · signed in" 12px muted, or "not installed" /
   "not signed in" muted with the CLI's fix-it hint as a title tooltip).
   When a harness supports discovery, its row expands (chevron) to the
@@ -148,7 +150,8 @@ The activity feed's `session-start` event line grows into a **session
 block** when telemetry exists:
 
 - **Live session**: the line shows the agent mark + "working" with
-  `.shimmer-run` + a small `gradient-spin`; beneath it, a collapsed
+  `.shimmer-run` (monochrome — no gradient outside the tab bar); beneath
+  it, a collapsed
   work-trace block (Mari's `ThinkingSteps` timeline fed by the WS
   `session-line` stream folded through the harness adapter + core
   reducer). Collapsed by default (FRONTEND rule: growing timelines drag
@@ -164,9 +167,10 @@ block** when telemetry exists:
 
 ### Sidebar (ours, not Linear's)
 
-Top→bottom: workspace header ("Elan", traffic-light inset handled as in
-Mari's App.tsx) · **Inbox** · **My threads** · a **Projects** section — each
-project expandable to its threads (status glyph + title, truncated) · footer:
+Top→bottom: an empty header strip (NO wordmark — the user knows what app
+they're in; it only keeps the traffic-light inset, handled as in Mari's
+App.tsx) · **Inbox** · **My threads** · a **Projects** section — each
+project expandable to its threads (title only, truncated) · footer:
 settings gear. Project rows are **text only** — no color swatches. Selected
 row: `bg-sidebar-accent` full-row pill (5px radius); hover: `--hover`.
 Section labels: 12px medium muted ("Projects"), like Linear — no ALL-CAPS.
@@ -179,12 +183,13 @@ Linear's issue list, 1:1:
 
 - Header row (below the tab row): view name + count, right side
   "＋ New thread" button.
-- Rows grouped by status with sticky group headers (`In Progress · 3`).
-- Row anatomy, left→right: status glyph (16px) · `KEY-N` in 12px muted
-  mono-ish · title (13px, truncates) · spacer · agent avatar stack
-  (overlapping 18px circles) · updated-at (12px muted). **No priority** —
-  priority does not exist in Elan (the human arbitrates; agents read policy
-  files, not columns).
+- One flat list, recency-ordered (updatedAt desc) — **no status grouping**;
+  statuses do not exist in Elan (removed 2026-07-11: they confused agents,
+  and long-lived threads have no lifecycle).
+- Row anatomy, left→right: `KEY-N` in 12px muted mono-ish · title (13px,
+  truncates) · spacer · agent avatar stack (18px) · updated-at (12px
+  muted). **No priority** — priority does not exist either (the human
+  arbitrates; agents read policy files, not columns).
 - Whole row clickable → opens the thread's tab; hover `--hover`.
 
 ### New thread (draft page, Notion-style)
@@ -240,21 +245,16 @@ Linear's issue list, 1:1:
 ### Properties rail (thread view only)
 
 Right-aligned 280px column, 12/13px rows with muted labels, exactly Linear:
-Status (glyph + name, popover select) · Agents (roster members with sessions
-in this thread; avatar + handle + session state) · Project (text only) ·
-Labels · Created/Updated meta at the bottom in 12px muted.
-v1: Status actually mutates the store; the rest display.
+Agents (roster members with sessions in this thread; avatar + handle +
+session state) · Project (text only) · Labels · Created/Updated meta at the
+bottom in 12px muted. Display only in v1.
 
-## Glyph vocabulary (Linear's, exactly)
+## Glyph vocabulary
 
-Status glyphs are 14px circles: Todo = hollow ring (muted); In Progress =
-ring with **orange 50% pie fill**; In Review = ring with **green 75% pie**
-(our addition, same family); Done = solid indigo disc with white check;
-Canceled = muted disc with ×. Draw as inline SVG in one component
-(`StatusGlyph`), no icon-library substitutes.
-
-There is **no priority glyph** — priority was deliberately deleted from the
-product. Don't reintroduce it.
+There is **no status glyph and no priority glyph** — both were deliberately
+deleted from the product (priority 2026-07-10, statuses 2026-07-11). Don't
+reintroduce either. The glyph vocabulary is: agent marks (below), the tab
+bar's working grid, and the ⚑ resolution flag.
 
 ## Avatars
 
@@ -269,9 +269,10 @@ product. Don't reintroduce it.
   fetches. New harness → add the mapping in the generator and rerun.
   Unknown harness → initials-circle fallback; mock → the `›_` prompt glyph.
 - **The human has no avatar in the feed** — user posts are bubbles, user
-  events are agentless lines, the composer has no gutter. (`GradientAvatar`
-  from `@outpacelabs/avatars`, seed "elan-user", remains the fallback should
-  a user glyph ever be needed — settings, onboarding.)
+  events are agentless lines, the composer has no gutter. Where a user mark
+  is unavoidable (mention popovers etc.) it's a bare monochrome person
+  silhouette (`UserGlyph`), same register as the agent marks — never a
+  colored or gradient disc.
 - Sizes: 18px in lists, 24px on comment roots, 20px on replies, 14px on
   event lines; marks render at 85% of the slot. `AvatarStack` is a tight
   gap-1 row (bare marks don't overlap legibly the way discs do).
@@ -281,10 +282,11 @@ product. Don't reintroduce it.
 One grammar, two signals:
 
 - **`gradient-spin`** (the matrix spinner) = "a harness process is live right
-  now." It appears in exactly two places: the thread tab's icon slot, and
-  beside the running agent in the rail's Agents row. Default preset, 3×3.
-- **`.shimmer-run`** on a title = "this object contains live work" (list
-  rows, sidebar thread rows).
+  now." It appears in exactly ONE place: the thread tab's icon slot, where
+  the still grey grid ignites. Everywhere else, liveness is monochrome.
+- **`.shimmer-run`** / **`.shimmer-text`** on text = "this object contains
+  live work" (list rows, sidebar thread rows, the rail's Running chip,
+  session-block headers, roster probing labels).
 - The running agent's avatar gets a 2px `--ring` outline. Waiting = hollow
   clock glyph · Done/Error = muted text. Never a pulsing dot, anywhere.
 

@@ -13,14 +13,15 @@ const HELP = `elan — act on the Elan board from inside an agent session
   elan reply <post-id> <text…>         reply inside an exchange
   elan resolve <post-id> <text…>       file the ⚑ resolution that closes an exchange
   elan attach <path> [--note <text…>]  register an artifact (+ optional note post)
-  elan status <todo|in-progress|in-review|done|canceled>   move the thread
   elan thread                          print the rendered thread context
   elan read <post-id>                  print the full exchange containing a post
   elan help                            this table
 
 Sessions stay hot: when your turn's work is done, just stop — new pings
 (@mentions and replies to your posts) arrive as new messages in this same
-session. (wake-me/wait are retired no-ops.)`;
+session. If a ping needs nothing from you, post nothing. @handle mentions
+SUMMON that agent — mention only to hand work off; narrate without the @.
+(status/wake-me/wait are retired no-ops.)`;
 
 function die(msg: string, code: number): never {
   console.error(msg);
@@ -59,14 +60,6 @@ async function api(method: string, path: string, body?: unknown): Promise<Respon
 
 const ts = (ms: number): string =>
   new Date(ms).toISOString().replace("T", " ").slice(0, 19);
-
-const STATUS_MAP: Record<string, string> = {
-  todo: "todo",
-  "in-progress": "in_progress",
-  "in-review": "in_review",
-  done: "done",
-  canceled: "canceled",
-};
 
 async function addPost(extra: Record<string, unknown>, text: string): Promise<void> {
   const res = await api("POST", "/api/posts", {
@@ -129,13 +122,12 @@ switch (verb) {
   }
 
   case "status": {
-    const to = STATUS_MAP[rest[0] ?? ""];
-    if (!to) die("usage: elan status <todo|in-progress|in-review|done|canceled>", 1);
-    await api("PATCH", `/api/threads/${encodeURIComponent(need("ELAN_THREAD"))}`, {
-      patch: { status: to },
-      actor: need("ELAN_AGENT"),
-    });
-    console.log(`status → ${rest[0]}`);
+    // Retired 2026-07-11 (thread statuses removed — they confused agents and
+    // long-lived threads have no lifecycle): exit 0 so old habits don't error.
+    console.log(
+      "Thread statuses were removed — threads have no status to move. " +
+        "Post your result instead (or nothing, if nothing was needed).",
+    );
     break;
   }
 

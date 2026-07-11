@@ -275,7 +275,7 @@ describe("REST + persistence", () => {
 
 describe("ping → turn (resident mock)", () => {
   test(
-    "@demo-bot runs the full loop: one record, turn done, idle, posts, artifact, status, worktree, log",
+    "@demo-bot runs the full loop: one record, turn done, idle, posts, artifact, worktree, log",
     async () => {
       const host = boot();
       const repo = hasGit ? initRepo() : newDir("elan-repo-");
@@ -335,7 +335,6 @@ describe("ping → turn (resident mock)", () => {
       expect(bodies.some((b) => b.startsWith("⚠︎"))).toBe(false);
 
       const t = state.threads.find((x) => x.id === thread.id)!;
-      expect(t.status).toBe("in_review");
 
       if (hasGit) {
         expect(t.worktreePath).toBeDefined();
@@ -1769,7 +1768,7 @@ describe("renderThreadContext", () => {
     threads: [
       {
         id: "t1", projectId: "p1", number: 7, title: "Fix the flake",
-        body: "The replay test flakes.", status: "in_progress", labels: [],
+        body: "The replay test flakes.", labels: [],
         createdBy: "user", createdAt: 1000, updatedAt: 9000,
         worktreePath: "/tmp/engram/.elan/worktrees/ENG-7",
       },
@@ -1784,7 +1783,8 @@ describe("renderThreadContext", () => {
     events: [
       { id: "e1", threadId: "t1", actor: "user", type: "created", payload: {}, at: 1000 },
       { id: "e2", threadId: "t1", actor: "user", type: "tagged", payload: { handle: "fable-5" }, at: 2001 },
-      { id: "e3", threadId: "t1", actor: "fable-5", type: "status", payload: { from: "todo", to: "in_progress" }, at: 7000 },
+      // A status-era event from stale storage — must degrade, not crash.
+      { id: "e3", threadId: "t1", actor: "fable-5", type: "status" as never, payload: { from: "todo", to: "in_progress" }, at: 7000 },
     ],
     sessions: [],
   };
@@ -1792,13 +1792,13 @@ describe("renderThreadContext", () => {
   test("header, roster table, event one-liners", () => {
     const out = renderThreadContext(fixtureState, "t1");
     expect(out).toContain("# ENG-7: Fix the flake");
-    expect(out).toContain("Status: in_progress");
+    expect(out).toContain("Project: Engram (/tmp/engram)");
     expect(out).toContain("The replay test flakes.");
     expect(out).toContain("## Roster");
     expect(out).toContain("| fable-5 | claude-code |");
     expect(out).toContain("| gpt-5.6 | codex |");
     expect(out).toContain("- user tagged @fable-5");
-    expect(out).toContain("- fable-5 moved todo → in_progress");
+    expect(out).toContain("- fable-5: status"); // stale event type degrades
   });
 
   test("resolved exchange collapses to its ⚑ line", () => {

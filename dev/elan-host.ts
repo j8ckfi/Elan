@@ -99,7 +99,6 @@ import {
   type Post,
   type RosterEntry,
   type Thread,
-  type ThreadStatus,
 } from "../src/lib/board/types.ts";
 
 const CLI_PATH = join(import.meta.dir, "elan-cli.ts");
@@ -117,11 +116,8 @@ const CORS = {
   "Access-Control-Allow-Headers": "Content-Type",
 } as const;
 
-const VALID_STATUS = new Set<string>([
-  "todo", "in_progress", "in_review", "done", "canceled",
-]);
 const EVENT_TYPES = new Set<string>([
-  "created", "status", "tagged", "session-start", "session-end", "artifact", "label",
+  "created", "tagged", "session-start", "session-end", "artifact", "label",
 ]);
 
 // (The harness registry — HARNESSES — lives below, after the extractors and
@@ -1469,21 +1465,28 @@ const VERB_TABLE = `| verb | usage |
 | reply | \`elan reply <post-id> <text>\` — reply inside an exchange |
 | resolve | \`elan resolve <post-id> <text>\` — file the ⚑ resolution that closes an exchange |
 | attach | \`elan attach <path> [--note <text>]\` — register an artifact on the board |
-| status | \`elan status <todo/in-progress/in-review/done/canceled>\` — move the thread |
 | thread | \`elan thread\` — reprint this context, refreshed |
 | read | \`elan read <post-id>\` — print the full exchange behind a ⚑ line |
 
 Your session stays hot: when your turn's work is done, just stop — every new
 ping (an @mention or a reply to your posts) arrives as a new message in this
-same session. There is nothing to wait on and no session to end.`;
+same session. There is nothing to wait on and no session to end.
+
+Board etiquette (hard rules — the board loops without them):
+- **@ summons.** Writing \`@handle\` anywhere in a post pings that agent and
+  starts a turn for them. Mention a handle ONLY to hand them work. When
+  narrating ("gpt-5.6 already reviewed this"), write handles WITHOUT the @.
+- **Replying pings too.** A reply inside an exchange summons the exchange's
+  author. Don't reply just to agree or acknowledge.
+- **Silence is an answer.** If a ping needs nothing from you — it's an FYI,
+  a late delivery, or already handled — post NOTHING and end your turn.
+  Never post acknowledgments, recaps, or "no action needed" notes.`;
 
 function eventLine(e: BoardEvent): string {
   const p = e.payload;
   switch (e.type) {
     case "created":
       return `- ${e.actor} created the thread`;
-    case "status":
-      return `- ${e.actor} moved ${String(p.from)} → ${String(p.to)}`;
     case "tagged":
       return `- ${e.actor} tagged @${String(p.handle)}`;
     case "session-start":
@@ -1536,11 +1539,7 @@ export function renderThreadContext(
 
   const out: string[] = [];
   out.push(`# ${key}: ${thread.title}`, "");
-  out.push(
-    `Status: ${thread.status}` +
-      (project ? ` · Project: ${project.name} (${project.repoPath})` : ""),
-    "",
-  );
+  if (project) out.push(`Project: ${project.name} (${project.repoPath})`, "");
   if (thread.body.trim()) out.push(thread.body.trim(), "");
 
   out.push("## Roster", "");
@@ -1577,8 +1576,9 @@ export function renderThreadContext(
         "process — read them before acting.",
     );
     out.push(
-      "- When your work is done: move the thread (`elan status …`) and mention " +
-        "whoever the policy files say acts next (`@handle` in a post).",
+      "- When your work is done: post the result (with an @mention only if " +
+        "someone specific must act next), then stop. If nothing was needed " +
+        "from you, stop without posting.",
     );
   }
   return out.join("\n").trimEnd() + "\n";
@@ -1589,11 +1589,14 @@ export function renderThreadContext(
 function shortInstructions(handle: string): string {
   return (
     `You are @${handle} on an Elan board thread. Act on the board ONLY via the ` +
-    "`elan` CLI on your PATH (elan post/reply/resolve/attach/status/thread/read " +
-    "— run `elan help`). The repo's own policy files (AGENTS.md etc.) govern " +
-    "process. When your turn's work is done, move the thread status, mention " +
-    "whoever policy says acts next, and stop — your session stays hot, and new " +
-    "pings arrive as new messages."
+    "`elan` CLI on your PATH (elan post/reply/resolve/attach/thread/read — run " +
+    "`elan help`). The repo's own policy files (AGENTS.md etc.) govern process. " +
+    "Board etiquette: @handle in a post SUMMONS that agent — mention a handle " +
+    "only to hand them work, and write handles without the @ when narrating; " +
+    "replying inside an exchange summons its author too. When your turn's work " +
+    "is done, post the result and stop; if a ping needs nothing from you, stop " +
+    "WITHOUT posting — never post acknowledgments or 'no action needed' notes. " +
+    "Your session stays hot, and new pings arrive as new messages."
   );
 }
 
@@ -2061,18 +2064,13 @@ export function startHost(opts: StartHostOptions = {}): ElanHost {
         return errRes("expected {patch, actor}", 400);
       const p = b.patch as Record<string, unknown>;
       const patch: Partial<
-        Pick<Thread, "title" | "body" | "status" | "labels" | "worktreePath">
+        Pick<Thread, "title" | "body" | "labels" | "worktreePath">
       > = {};
       if (typeof p.title === "string") patch.title = p.title;
       if (typeof p.body === "string") patch.body = p.body;
       if (typeof p.worktreePath === "string") patch.worktreePath = p.worktreePath;
       if (Array.isArray(p.labels))
         patch.labels = p.labels.filter((l): l is string => typeof l === "string");
-      if (p.status !== undefined) {
-        if (typeof p.status !== "string" || !VALID_STATUS.has(p.status))
-          return errRes(`invalid status ${JSON.stringify(p.status)}`, 400);
-        patch.status = p.status as ThreadStatus;
-      }
       store.updateThread(id, patch, b.actor);
       return json({ ok: true });
     }
@@ -2389,8 +2387,13 @@ export function startHost(opts: StartHostOptions = {}): ElanHost {
   }
 
   /** Complete a turn: done + idle (the error badge clears). Silent-success
-   *  fallback per turn: a turn that spoke only in its stream gets its final
-   *  message posted on its behalf, mentions suppressed. */
+   *  fallback: a turn that spoke only in its stream gets its final message
+   *  posted on its behalf, mentions suppressed — but ONLY while the agent
+   *  has never spoken on this board thread at all. The fallback exists for
+   *  weak models that never figured out `elan`; an agent that has posted
+   *  before and stays quiet now is following the no-op rule (silence is an
+   *  answer — see VERB_TABLE), and ventriloquizing its stream turns every
+   *  acknowledgment turn into board spam (the 2026-07-11 chatter loop). */
   function completeTurn(
     record: AgentSessionRecord,
     turn: Turn,
@@ -2416,7 +2419,20 @@ export function startHost(opts: StartHostOptions = {}): ElanHost {
           e.type !== "session-start" &&
           e.type !== "session-end",
       );
-    if (!spoke && streamText?.trim()) {
+    const everSpoke =
+      spoke ||
+      st.posts.some(
+        (p) => p.threadId === record.threadId && p.author === record.handle,
+      ) ||
+      st.events.some(
+        (e) =>
+          e.threadId === record.threadId &&
+          e.actor === record.handle &&
+          e.type !== "session-start" &&
+          e.type !== "session-end" &&
+          e.type !== "tagged",
+      );
+    if (!everSpoke && streamText?.trim()) {
       store.addPost({
         threadId: record.threadId,
         author: record.handle,
@@ -2464,9 +2480,14 @@ export function startHost(opts: StartHostOptions = {}): ElanHost {
   ): string {
     const ev = state.events.find((e) => e.id === turn.eventId);
     const trigger = ev ? describeTrigger(ev, state) : "Pinged on this thread.";
-    if (!full) return `${trigger}\n(run \`elan thread\` for current context)`;
+    // Every turn prompt restates the no-op rule — it's the loop breaker, and
+    // a resident session's system prompt is many turns behind it by now.
+    const quiet =
+      "(If this ping needs nothing from you, do NOT post — just end your turn.)";
+    if (!full)
+      return `${trigger}\n${quiet}\n(run \`elan thread\` for current context)`;
     const context = renderThreadContext(state, record.threadId, record.handle);
-    return `${context}\n${TURN_PING_SEPARATOR}\n\n${trigger}\n`;
+    return `${context}\n${TURN_PING_SEPARATOR}\n\n${trigger}\n${quiet}\n`;
   }
 
   /** Turn claims in this thread inside the rolling budget window. Budget

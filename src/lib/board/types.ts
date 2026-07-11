@@ -30,13 +30,6 @@ export interface RosterEntry {
   color: string;
 }
 
-export type ThreadStatus =
-  | "todo"
-  | "in_progress"
-  | "in_review"
-  | "done"
-  | "canceled";
-
 export interface Thread {
   id: string;
   projectId: string;
@@ -45,7 +38,6 @@ export interface Thread {
   title: string;
   /** Markdown; image attachments referenced by path. */
   body: string;
-  status: ThreadStatus;
   labels: string[];
   createdBy: Author;
   createdAt: number;
@@ -75,9 +67,10 @@ export interface Post {
   attachments: Attachment[];
 }
 
+// "status" events existed pre-2026-07-11 (thread statuses were removed);
+// stale storage may still hold them — renderers degrade unknown types.
 export type BoardEventType =
   | "created"
-  | "status"
   | "tagged"
   | "session-start"
   | "session-end"

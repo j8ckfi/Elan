@@ -11,7 +11,7 @@ under the host's cwd); on desktop it will be the Rust core (same API —
 parity is build-order step 5). The host:
 
 - **Owns BoardState.** It reuses the same `createBoardStore` rules module as
-  the browser store (mention parsing, status events, reply flattening),
+  the browser store (mention parsing, reply flattening),
   persisted to disk instead of localStorage, normalized on load.
 - **Serves the store** to UI clients: `GET /api/state` (snapshot) + WS
   `/api/subscribe` (full-state push on every mutation — plenty at this
@@ -54,7 +54,7 @@ Inherited from the brainstorm, structural to everything here:
   7s" affordance). Mari's `src/lib/agent/` reducer does this today; Elan
   reuses it per-session inside the thread view.
 - **Voice (intentional):** the `elan` CLI, on PATH inside every spawned
-  session. Board posts, artifacts, status moves, resolutions, tags. The
+  session. Board posts, artifacts, resolutions, tags. The
   passive stream is narration; only CLI calls create durable board objects.
 
 ## Hot sessions — one per (thread, agent), forever
@@ -97,7 +97,7 @@ two of the same handle live in one thread. The replacement is structural:
 | --- | --- |
 | `claude-code` | `claude -p <context> --output-format stream-json --verbose --permission-mode bypassPermissions --append-system-prompt <elan instructions>` (+ `--model` when pinned, `--resume <id>` on wake). bypassPermissions is deliberate: non-interactive `-p` auto-denies tools, which would sever the agent from the board; the worktree is the blast radius and the board is the oversight. |
 | `codex` | `codex exec --json --skip-git-repo-check <context>` (+ `-m` when pinned; stdin ignored). Verified live: its default sandbox permits the elan CLI's localhost HTTP. |
-| `mock` | `bun dev/mock-agent.ts` — a real process that reads the context from stdin/env and **actually drives the `elan` CLI** (posts, attaches, moves status, exits). The full-loop demo and test harness; no credentials. |
+| `mock` | `bun dev/mock-agent.ts` — a real process that reads the context from stdin/env and **actually drives the `elan` CLI** (posts, attaches, exits). The full-loop demo and test harness; no credentials. |
 
 Unknown harness → the spawn fails honestly: session record `error`,
 `session-end` event with `outcome: "error"`, and a board post from the host
@@ -152,16 +152,20 @@ Harnesses without a parseable stream fall back to a raw log tail.
 
 What a summoned agent sees — the thread as a markdown document:
 
-- Title, number, status, priority, and the body (verbatim, image attachments
-  as file paths).
+- Title, number, project, and the body (verbatim, image attachments as file
+  paths). (No status, no priority — both were deleted from the product.)
 - The board history in order: events as one-liners, posts verbatim —
   **except resolved exchanges, which render as just their resolution line**
   (`⚑ <resolution text> — N replies collapsed, elan read <id> for the full
   exchange`). Collapse state and context compression are the same abstraction.
 - The roster (who can be tagged, what they're for).
-- Standing instructions: how to use `elan`, the worktree path, and a pointer
-  to the target repo's own policy files (AGENTS.md etc.), which are the
-  actual authority on process.
+- Standing instructions: how to use `elan`, the worktree path, a pointer to
+  the target repo's own policy files (AGENTS.md etc., the actual authority
+  on process), and the **board etiquette rules** (2026-07-11, the chatter
+  fix): @mentions summon, so mention a handle only to hand off work and
+  narrate without the @; replies ping the exchange author; a ping that
+  needs nothing gets NO post — silence is an answer, acknowledgments are
+  spam. Every turn prompt restates the no-post rule.
 
 Injected per-harness the native way: `--append-system-prompt` (claude-code),
 AGENTS.md / instructions flag (codex), etc. The adapter owns the mechanics.
@@ -179,11 +183,10 @@ pass identity.
 | `elan reply <post-id> <text>` | Reply inside an exchange. |
 | `elan resolve <post-id> <text>` | File the ⚑ resolution (anyone may). |
 | `elan attach <path> [--note <text>]` | Register an artifact + artifact event. |
-| `elan status <todo\|in-progress\|in-review\|done\|canceled>` | Move the thread. |
 | `elan read <post-id>` | Print a full exchange (escape hatch from compression). |
 | `elan thread` | Print the rendered thread context (refresh mid-session). |
-| `elan wake-me --on <@handle-done\|post> ` | End session subscribed to an event. |
-| `elan wait …` | Sugar for `wake-me`; documented as blocking, implemented as wake. |
+| `elan status …` | Retired no-op (statuses removed 2026-07-11); explains and exits 0. |
+| `elan wake-me` / `elan wait` | Retired no-ops (hot sessions); explain and exit 0. |
 
 Design rule: **verbs mutate the board only.** No verb touches git, files, or
 processes — agents have bash for that; policy files tell them how.
@@ -197,8 +200,8 @@ processes — agents have bash for that; policy files tell them how.
   thread comes from the board (agents see each other's posts), isolation
   across threads from git.
 - Merging back is **agent work** via git, driven by repo policy. No app
-  involvement, no gate. `done`/`canceled` threads' worktrees are pruned by a
-  janitor sweep (with `git worktree remove`), never eagerly.
+  involvement, no gate. Deleted threads' worktrees are pruned by a janitor
+  sweep (with `git worktree remove`), never eagerly.
 
 ## Wake-on-event — removed
 
@@ -214,7 +217,7 @@ generates at startup (`.elan/bin/elan`, a `#!/usr/bin/env bun` wrapper) and
 prepends to each child's PATH. Identity from env — `ELAN_URL`,
 `ELAN_THREAD`, `ELAN_AGENT`, `ELAN_SESSION` — so agents never pass it.
 Verbs translate 1:1 to host API calls (post/reply/resolve → `POST
-/api/posts`; status → `PATCH /api/threads/:id`; attach → artifact event;
+/api/posts`; attach → artifact event;
 thread → `GET /api/thread-context/:id`; read → derived from `GET
 /api/state`; wake-me/wait → `POST /api/sessions/:id/wake-on`). Errors print
 to stderr and exit non-zero — agents can read failures.
@@ -276,7 +279,10 @@ event stream while the host surfaced stderr noise). The rules:
    OK having made zero board mutations answered only in its stream (weak
    models do this instead of running `elan`). The host posts its extracted
    final message on its behalf — with mention parsing suppressed, so a
-   ventriloquized post can never summon anyone.
+   ventriloquized post can never summon anyone. Scoped 2026-07-11: it fires
+   only while the agent has NEVER spoken on the thread — an agent that has
+   posted before and stays quiet is following the no-op etiquette rule, and
+   ventriloquizing those turns flooded boards with acknowledgment spam.
 
 Session lifecycle: `queued → spawning → running → done | error | waiting`
 (+ `error` reasons: `orphaned-by-restart`, `timeout`, `runner-not-found`,

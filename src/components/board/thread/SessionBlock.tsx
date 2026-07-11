@@ -1,7 +1,7 @@
 // The session block — a session-start event line's working timeline
 // (docs/FRONTEND.md "Session telemetry"). Live sessions render the agent
-// mark + a shimmering current-step label + the gradient-spin (a harness
-// process is live right now), with the collapsed ThinkingSteps timeline
+// mark + a shimmering current-step label (monochrome — the gradient lives
+// in the tab bar only), with the collapsed ThinkingSteps timeline
 // beneath; completed sessions rest as "Worked for 42s ▸" and replay the
 // on-disk log lazily on first expand. Harnesses without a stream translator
 // get the honest fallback: the raw log tail in a fenced block, same
@@ -9,7 +9,6 @@
 // this block is only the detail beneath the event line.
 
 import { useMemo, useState } from "react";
-import { GradientSpin } from "gradient-spin";
 import type { ChatItem } from "@/lib/agent/types";
 import type { AgentSessionRecord, RosterEntry } from "@/lib/board/types";
 import { useBoard, useSessionTelemetry } from "@/lib/board/useBoard";
@@ -147,7 +146,6 @@ function SessionBlockInner({
             <span className="inline-flex items-center gap-2">
               <AgentAvatar author={session.handle} roster={roster} size={14} />
               <span className="shimmer-run">{liveLabel}</span>
-              <GradientSpin cellSize={2.5} cellGap={1.25} label="Working" />
             </span>
           ) : (
             restingLabel

@@ -282,7 +282,6 @@ export function createHostStore(baseUrl: string): BoardStore {
         number,
         title: input.title,
         body: input.body,
-        status: "todo",
         labels: [],
         createdBy: input.createdBy ?? USER,
         createdAt: now,

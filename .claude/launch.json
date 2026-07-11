@@ -4,14 +4,21 @@
     {
       "name": "mari-web",
       "runtimeExecutable": "bun",
-      "runtimeArgs": ["run", "dev"],
+      "runtimeArgs": [
+        "run",
+        "dev"
+      ],
       "port": 1420
     },
     {
       "name": "elan-preview",
       "runtimeExecutable": "bun",
-      "runtimeArgs": ["run", "dev", "--", "--port", "5199", "--strictPort"],
-      "port": 5199
+      "runtimeArgs": [
+        "run",
+        "dev"
+      ],
+      "port": 5199,
+      "autoPort": true
     }
   ]
 }

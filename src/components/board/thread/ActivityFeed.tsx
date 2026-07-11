@@ -12,9 +12,8 @@ import {
   type Exchange,
   type Post,
   type RosterEntry,
-  type ThreadStatus,
 } from "@/lib/board/types";
-import { AgentAvatar, STATUS_META } from "@/components/board/glyphs";
+import { AgentAvatar } from "@/components/board/glyphs";
 import { relativeTime } from "@/lib/relative-time";
 import { ExchangeBlock } from "./ExchangeBlock";
 import { SessionBlock } from "./SessionBlock";
@@ -126,15 +125,6 @@ function describe(event: BoardEvent): ReactNode {
   switch (event.type) {
     case "created":
       return "created the thread";
-    case "status": {
-      const from = field<ThreadStatus>(p, "from");
-      const to = field<ThreadStatus>(p, "to");
-      return (
-        <>
-          moved from {from ? STATUS_META[from].label : "—"} to {to ? STATUS_META[to].label : "—"}
-        </>
-      );
-    }
     case "tagged": {
       const handle = field(p, "handle");
       return (

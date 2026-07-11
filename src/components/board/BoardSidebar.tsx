@@ -30,7 +30,6 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { DropdownMenu, DropdownTrigger, DropdownContent } from "@/components/ui/dropdown";
-import { StatusGlyph } from "@/components/board/glyphs";
 import { boardStore, useBoard } from "@/lib/board/useBoard";
 import type { Project, Thread } from "@/lib/board/types";
 import { cn } from "@/lib/utils";
@@ -113,11 +112,9 @@ export function BoardSidebar({
       className="border-r-0"
       data-tauri-drag-region="deep"
     >
-      <SidebarHeader className="px-2 pt-9 pb-1">
-        <span className="px-1 text-[13px] font-medium text-sidebar-foreground/90">
-          Elan
-        </span>
-      </SidebarHeader>
+      {/* No wordmark — the user knows what app they're in. The header keeps
+          the traffic-light inset only. */}
+      <SidebarHeader className="px-2 pt-9 pb-1" />
 
       <SidebarContent className="gap-0.5 px-1.5 py-1">
         <NavRow
@@ -411,7 +408,6 @@ function ThreadRow({
           : "text-sidebar-foreground/70 hover:bg-hover hover:text-sidebar-foreground",
       )}
     >
-      <StatusGlyph status={thread.status} size={14} className="shrink-0" />
       <span
         className={cn(
           "min-w-0 flex-1 truncate text-left",

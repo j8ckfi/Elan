@@ -29,14 +29,14 @@ test.beforeEach(async ({ page }) => {
 });
 
 // ── Fixture ───────────────────────────────────────────────────────────────
-// A compact hand-rolled BoardState: two projects, four threads spanning
-// three statuses, a resolved agent-vs-agent exchange, and a bare thread with
-// nothing but its "created" event. Ids are stable slugs (not uuids) so the
+// A compact hand-rolled BoardState: two projects, four threads, a resolved
+// agent-vs-agent exchange, and a bare thread with nothing but its "created"
+// event. Ids are stable slugs (not uuids) so the
 // tests below can reference them directly. Kept in sync with the shapes in
 // src/lib/board/types.ts by hand — this file doesn't import app source.
 const FLAGSHIP = "Design the engram geometry experiment"; // ENG-1, resolved exchange
-const DONE_THREAD = "Ship the CLI similarity command"; // ENG-2
-const TODO_THREAD = "Write onboarding doc for engram schema"; // ENG-3, bare feed
+const SECOND_THREAD = "Ship the CLI similarity command"; // ENG-2
+const BARE_THREAD = "Write onboarding doc for engram schema"; // ENG-3, bare feed
 const FIXTURE_THREAD_COUNT = "4";
 
 function buildFixture() {
@@ -56,9 +56,6 @@ function buildFixture() {
         createdAt: ago(30 * HOUR),
       },
       {
-        // Named distinctly from the app's own "Elan" wordmark in the sidebar
-        // header — reusing "Elan" as a project name made the sidebar-scoped
-        // locator ambiguous (matched the header too).
         id: "proj-eln",
         key: "ELN",
         name: "Nimbus",
@@ -80,7 +77,6 @@ function buildFixture() {
         number: 1,
         title: FLAGSHIP,
         body: "",
-        status: "in_progress",
         labels: [],
         createdBy: "user",
         createdAt: ago(3 * HOUR),
@@ -90,9 +86,8 @@ function buildFixture() {
         id: "thread-eng-2",
         projectId: "proj-eng",
         number: 2,
-        title: DONE_THREAD,
+        title: SECOND_THREAD,
         body: "",
-        status: "done",
         labels: [],
         createdBy: "user",
         createdAt: ago(6 * HOUR),
@@ -102,9 +97,8 @@ function buildFixture() {
         id: "thread-eng-3",
         projectId: "proj-eng",
         number: 3,
-        title: TODO_THREAD,
+        title: BARE_THREAD,
         body: "",
-        status: "todo",
         labels: [],
         createdBy: "user",
         createdAt: ago(1 * HOUR),
@@ -116,7 +110,6 @@ function buildFixture() {
         number: 1,
         title: "Pick roster avatar colors",
         body: "",
-        status: "in_review",
         labels: [],
         createdBy: "user",
         createdAt: ago(2 * HOUR),
@@ -208,13 +201,13 @@ test("first run shows Welcome, one board tab, no demo data", async ({ page }) =>
 
 // ── 2 · Fixture board renders ─────────────────────────────────────────────
 
-test("a seeded board renders: grouped list, key chips, both projects", async ({ page }) => {
+test("a seeded board renders: flat list, key chips, both projects", async ({ page }) => {
   await seedFixture(page);
 
-  // Sticky status group headers.
-  await expect(page.getByText("In Progress", { exact: true })).toBeVisible();
-  await expect(page.getByText("Todo", { exact: true })).toBeVisible();
-  await expect(page.getByText("Done", { exact: true })).toBeVisible();
+  // No status grouping (statuses were removed 2026-07-11) — all four rows
+  // render in one flat, recency-ordered list.
+  await expect(page.getByText(SECOND_THREAD)).toBeVisible();
+  await expect(page.getByText(BARE_THREAD)).toBeVisible();
 
   // Inbox rows carry project key chips (inbox is cross-project).
   await expect(page.getByText("ENG", { exact: true }).first()).toBeVisible();
@@ -304,20 +297,19 @@ test("tabs: open, switch, Esc-close with fallback, restore across reload", async
   await seedFixture(page);
 
   // Open a thread → its tab appears, selected, and the view renders.
-  await openThread(page, DONE_THREAD);
+  await openThread(page, SECOND_THREAD);
   await expect(page.getByRole("tab")).toHaveCount(2);
-  await expect(page.getByRole("tab", { name: new RegExp(DONE_THREAD) })).toHaveAttribute(
+  await expect(page.getByRole("tab", { name: new RegExp(SECOND_THREAD) })).toHaveAttribute(
     "aria-selected",
     "true",
   );
   await expect(page.getByRole("heading", { name: "Activity" })).toBeVisible();
-  // Properties rail: the Status row shows this thread's status.
-  await expect(page.getByText("Status", { exact: true })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Done", exact: true })).toBeVisible();
+  // The properties rail has no Status row — statuses are gone.
+  await expect(page.getByText("Status", { exact: true })).toHaveCount(0);
 
   // Open a second thread from the board tab → two thread tabs.
   await page.getByRole("tab", { name: "Inbox" }).click();
-  await openThread(page, TODO_THREAD);
+  await openThread(page, BARE_THREAD);
   await expect(page.getByRole("tab")).toHaveCount(3);
 
   // Click the first thread tab → switches back. Aim at the tab's padding,
@@ -325,27 +317,27 @@ test("tabs: open, switch, Esc-close with fallback, restore across reload", async
   // (browser-tab pattern), and on a collapsed icon-only tab that ✕ sits
   // exactly at the center — a dead-center click would close, not select.
   await page
-    .getByRole("tab", { name: new RegExp(DONE_THREAD) })
+    .getByRole("tab", { name: new RegExp(SECOND_THREAD) })
     .click({ position: { x: 6, y: 16 } });
-  await expect(page.locator("h1")).toHaveText(DONE_THREAD);
+  await expect(page.locator("h1")).toHaveText(SECOND_THREAD);
 
   // Esc (focus not in a field) closes the active tab and falls back to the
   // neighbor, not the board.
   await page.keyboard.press("Escape");
   await expect(page.getByRole("tab")).toHaveCount(2);
-  await expect(page.locator("h1")).toHaveText(TODO_THREAD);
+  await expect(page.locator("h1")).toHaveText(BARE_THREAD);
 
   // Open tabs + active tab persist across launches (elan.tabs.v1).
   await page.reload();
   await expect(page.getByRole("tab")).toHaveCount(2);
-  await expect(page.locator("h1")).toHaveText(TODO_THREAD);
+  await expect(page.locator("h1")).toHaveText(BARE_THREAD);
 });
 
 // ── 6 · Messaging ─────────────────────────────────────────────────────────
 
 test("messaging: user bubble with no author name, @mention popover, tagged event", async ({ page }) => {
   await seedFixture(page);
-  await openThread(page, TODO_THREAD); // bare feed: only the created event
+  await openThread(page, BARE_THREAD); // bare feed: only the created event
 
   // Send a message — it renders as a bubble, and the feed never says "You".
   await composer(page).fill("Board looks solid — shipping the e2e suite now.");
@@ -417,22 +409,7 @@ test("exchanges: resolved collapse row expands/collapses; reply lands in the rai
   ).toBeVisible();
 });
 
-// ── 8 · Status mutation ──────────────────────────────────────────────────
-
-test("status: rail dropdown mutation logs a moved event and updates the rail", async ({ page }) => {
-  await seedFixture(page);
-  await openThread(page, TODO_THREAD);
-
-  await page.getByRole("button", { name: "Todo", exact: true }).click();
-  await page.getByRole("menuitemradio", { name: "Done" }).click();
-
-  // The feed gains the status event (user actor → agentless voice) and the
-  // rail's Status row now reads Done.
-  await expect(page.getByText(/moved from Todo to Done/)).toBeVisible();
-  await expect(page.getByRole("button", { name: "Done", exact: true })).toBeVisible();
-});
-
-// ── 9 · Delete project ────────────────────────────────────────────────────
+// ── 8 · Delete project ────────────────────────────────────────────────────
 
 test("delete project: sidebar ⋯ → confirm → last project gone returns Welcome", async ({ page }) => {
   await page.getByRole("button", { name: "Open a project…" }).click();

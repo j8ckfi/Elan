@@ -1,7 +1,7 @@
 // Demo data for createLocalStore's first boot. Deliberately rich: every
-// ThreadStatus, every BoardEventType, a resolved multi-reply agent-vs-agent
-// exchange, an unresolved live one, artifacts, and both a "running" and a
-// "waiting" session — see docs/DATA-MODEL.md's last paragraph for the
+// BoardEventType, a resolved multi-reply agent-vs-agent exchange, an
+// unresolved live one, artifacts, and both a "running" and a "waiting"
+// session — see docs/DATA-MODEL.md's last paragraph for the
 // checklist this file exists to satisfy.
 //
 // Ids are readable slugs, not crypto.randomUUID() — this data is fixture-like
@@ -132,7 +132,6 @@ export function seedState(): BoardState {
         "survives replay? Want a concrete plan scoped to this repo before " +
         "anyone touches code — data sources, the metric, and a falsifiable " +
         "success criterion.",
-      status: "in_progress",
       labels: [],
       createdBy: USER,
       createdAt,
@@ -329,17 +328,6 @@ export function seedState(): BoardState {
       ),
     );
 
-    events.push(
-      event(
-        id,
-        "eng1-ev10",
-        "fable-5",
-        "status",
-        { from: "todo", to: "in_progress" },
-        t(98),
-      ),
-    );
-
     posts.push(
       post("eng1-p13", id, USER, "@gpt-5.6 you're up — write plan v2", t(100)),
     );
@@ -360,7 +348,6 @@ export function seedState(): BoardState {
       number: 2,
       title: "Consolidation replay test is flaky under load",
       body: "tests/replay-consolidation.test.ts fails intermittently when the suite runs under load. Reproduce and fix.",
-      status: "done",
       labels: [],
       createdBy: USER,
       createdAt,
@@ -379,7 +366,6 @@ export function seedState(): BoardState {
     );
     events.push(event(id, "eng2-ev2", USER, "tagged", { handle: "fable-5" }, t(10)));
     events.push(
-      event(id, "eng2-ev3", "fable-5", "status", { from: "todo", to: "in_progress" }, t(15)),
     );
 
     sessions.push({
@@ -415,7 +401,6 @@ export function seedState(): BoardState {
       ),
     );
     events.push(
-      event(id, "eng2-ev6", "fable-5", "status", { from: "in_progress", to: "done" }, t(52)),
     );
   }
 
@@ -433,7 +418,6 @@ export function seedState(): BoardState {
       number: 3,
       title: "Sparse embedding index spike",
       body: "Explore a sparse index for embedding lookups. Spike only — don't productionize.",
-      status: "canceled",
       labels: [],
       createdBy: USER,
       createdAt,
@@ -454,7 +438,6 @@ export function seedState(): BoardState {
       ),
     );
     events.push(
-      event(id, "eng3-ev2", USER, "status", { from: "todo", to: "canceled" }, t(2 * 24 * 60 + 1)),
     );
   }
 
@@ -472,7 +455,6 @@ export function seedState(): BoardState {
       number: 4,
       title: "CLI: add engram similarity metric",
       body: "Add a `similarity` subcommand to the CLI that reports cosine distance between two engram ids.",
-      status: "in_review",
       labels: [],
       createdBy: USER,
       createdAt,
@@ -491,7 +473,6 @@ export function seedState(): BoardState {
     );
     events.push(event(id, "eng4-ev2", USER, "tagged", { handle: "fable-5" }, t(5)));
     events.push(
-      event(id, "eng4-ev3", "fable-5", "status", { from: "todo", to: "in_progress" }, t(10)),
     );
 
     sessions.push({
@@ -521,7 +502,6 @@ export function seedState(): BoardState {
       post("eng4-p2", id, "fable-5", "Done. `elan-cli similarity <a> <b>` ships in this branch.", t(121)),
     );
     events.push(
-      event(id, "eng4-ev6", "fable-5", "status", { from: "in_progress", to: "in_review" }, t(122)),
     );
     posts.push(post("eng4-p3", id, "fable-5", "@gpt-5.6 mind reviewing?", t(123)));
     events.push(event(id, "eng4-ev7", "fable-5", "tagged", { handle: "gpt-5.6" }, t(123)));
@@ -541,7 +521,6 @@ export function seedState(): BoardState {
       number: 5,
       title: "Memory decay curve has weird outliers past day 30",
       body: "Decay curve for consolidated engrams shows outliers past the day-30 mark. Real effect or measurement artifact?",
-      status: "in_progress",
       labels: [],
       createdBy: USER,
       createdAt,
@@ -550,7 +529,6 @@ export function seedState(): BoardState {
 
     events.push(event(id, "eng5-ev1", USER, "created", {}, createdAt));
     events.push(
-      event(id, "eng5-ev2", USER, "status", { from: "todo", to: "in_progress" }, t(5)),
     );
 
     const rootPost = post(
@@ -640,7 +618,6 @@ export function seedState(): BoardState {
       number: 6,
       title: "Write onboarding doc for engram schema",
       body: "New contributors keep asking the same questions about the engram schema. Write it down.",
-      status: "todo",
       labels: [],
       createdBy: USER,
       createdAt,
@@ -663,7 +640,6 @@ export function seedState(): BoardState {
       number: 1,
       title: "Board store persistence layer",
       body: "Implement createLocalStore per DATA-MODEL.md — debounced localStorage persistence, hydrate-or-seed.",
-      status: "in_progress",
       labels: [],
       createdBy: USER,
       createdAt,
@@ -682,7 +658,6 @@ export function seedState(): BoardState {
     );
     events.push(event(id, "eln1-ev2", USER, "tagged", { handle: "fable-5" }, t(10)));
     events.push(
-      event(id, "eln1-ev3", "fable-5", "status", { from: "todo", to: "in_progress" }, t(15)),
     );
 
     sessions.push({
@@ -731,7 +706,6 @@ export function seedState(): BoardState {
       number: 2,
       title: "Design roster color tokens",
       body: "Pick avatar tint colors for the roster that hold up against both themes.",
-      status: "todo",
       labels: [],
       createdBy: USER,
       createdAt,
@@ -755,7 +729,6 @@ export function seedState(): BoardState {
       number: 3,
       title: "Ship wait/wake CLI command",
       body: "Add `elan wait --on session-end --handle <h>` to end the current session and resume on wake.",
-      status: "done",
       labels: [],
       createdBy: USER,
       createdAt,
@@ -774,7 +747,6 @@ export function seedState(): BoardState {
     );
     events.push(event(id, "eln3-ev2", USER, "tagged", { handle: "fable-5" }, t(5)));
     events.push(
-      event(id, "eln3-ev3", "fable-5", "status", { from: "todo", to: "in_progress" }, t(10)),
     );
 
     sessions.push({
@@ -809,7 +781,6 @@ export function seedState(): BoardState {
       ),
     );
     events.push(
-      event(id, "eln3-ev6", "fable-5", "status", { from: "in_progress", to: "done" }, t(DAY_MIN + 2)),
     );
   }
 
@@ -827,7 +798,6 @@ export function seedState(): BoardState {
       number: 4,
       title: "Slack-style notification sounds",
       body: "Explore notification sounds for tags/mentions.",
-      status: "canceled",
       labels: [],
       createdBy: USER,
       createdAt,
@@ -846,7 +816,6 @@ export function seedState(): BoardState {
       ),
     );
     events.push(
-      event(id, "eln4-ev2", USER, "status", { from: "todo", to: "canceled" }, t(121)),
     );
   }
 

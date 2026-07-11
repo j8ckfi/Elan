@@ -26,16 +26,12 @@ export interface RosterEntry {
   color: string;         // avatar tint
 }
 
-export type ThreadStatus =
-  | "todo" | "in_progress" | "in_review" | "done" | "canceled";
-
 export interface Thread {
   id: string;
   projectId: string;
   number: number;        // per-project sequence → "ENG-12"
   title: string;
   body: string;          // markdown; image attachments referenced by path
-  status: ThreadStatus;
   labels: string[];
   createdBy: Author;
   createdAt: number;
@@ -63,9 +59,11 @@ export interface Post {
 
 // Activity lines. Separate from posts (Linear does the same): they're
 // system-generated, dedupe/group differently, and never have replies.
+// ("status" events existed pre-2026-07-11 — thread statuses were REMOVED:
+// they confused agents and long-lived threads have no lifecycle. Stale
+// storage may still hold them; renderers degrade unknown types.)
 export type BoardEventType =
   | "created"        // payload: {}
-  | "status"         // payload: { from: ThreadStatus; to: ThreadStatus }
   | "tagged"         // payload: { handle: string }  (actor tagged handle)
   | "session-start"  // payload: { sessionId: string; handle: string }
   | "session-end"    // payload: { sessionId: string; handle: string; outcome: "done"|"error"|"waiting" }
@@ -148,7 +146,7 @@ export interface BoardStore {
   createThread(input: { projectId: string; title: string; body: string;
     createdBy?: Author }): Thread;
   updateThread(id: string, patch: Partial<Pick<Thread,
-    "title" | "body" | "status" | "labels">>, actor: Author): void;
+    "title" | "body" | "labels">>, actor: Author): void;
   // Removes the thread and all its posts/events/sessions. Emits no event.
   deleteThread(id: string): void;
   // Removes the project and everything under it. The escape hatch back to
@@ -176,7 +174,6 @@ ORCHESTRATION.md), and `createHostStore(url)`
 
 Rules the store enforces (not the callers):
 
-- `updateThread` with a `status` change emits the `status` BoardEvent itself.
 - `addPost` bumps the thread's `updatedAt`; a `replyTo` chain is flattened to
   the top-level parent (one level deep, always).
 - `addPost` scans the body for `@handle` mentions against the roster and
@@ -202,5 +199,5 @@ one mutation; unlike `updateThread`, it emits no BoardEvent (there's no
 thread left to log activity against).
 
 Seed data must exercise every rendering path: multiple projects, threads in
-every status, a thread with a long resolved agent-vs-agent exchange, an
+every event type, a thread with a long resolved agent-vs-agent exchange, an
 unresolved live exchange, artifacts, and system events of each type.

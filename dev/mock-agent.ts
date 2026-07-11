@@ -5,8 +5,8 @@
 // turn — {"prompt": string, "turn": N} — and reads a claude-stream-shaped
 // {"type":"result",…} line as the turn-end signal.
 //
-//   turn 1     → the full demo script (post, artifact, status, post), the
-//                same loop the one-shot mock always drove;
+//   turn 1     → the full demo script (post, artifact, post), the same loop
+//                the one-shot mock always drove;
 //   turn N > 1 → `elan post "turn N ack: <prompt's first 40 chars>"`;
 //   any turn whose PING contains "[stall]" → no result line, sleep forever
 //                (the host's per-turn timeout test);
@@ -81,9 +81,6 @@ function runScript(): void {
   pause();
 
   elan("attach", "mock-plan.md", "--note", "Plan attached.");
-  pause();
-
-  elan("status", "in-review");
   pause();
 
   // No @mentions here on purpose — a mention would ping another agent (loop).

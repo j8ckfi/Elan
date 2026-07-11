@@ -8,7 +8,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import { IconChevronRight, IconX } from "@tabler/icons-react";
-import { GradientSpin } from "gradient-spin";
 import { AgentAvatar } from "@/components/board/glyphs";
 import { boardStore, useBoard } from "@/lib/board/useBoard";
 import { openDoctor, refreshDoctor, useDoctor, type DoctorRow } from "@/lib/board/doctor";
@@ -144,7 +143,7 @@ export function RosterEditor({
       <h4 className="flex items-center gap-2 text-[12px] font-medium text-muted-foreground select-none">
         Available on this machine
         {doctor?.status === "probing" && doctor.rows.length === 0 && (
-          <GradientSpin cellSize={2.5} cellGap={1} label="Detecting CLIs" />
+          <span className="shimmer-text text-[12px] font-normal">Detecting…</span>
         )}
       </h4>
       {doctor == null ? (
@@ -447,7 +446,7 @@ function DetectionRow({
         {harnessName(row.id)}
       </span>
       {row.pending ? (
-        <GradientSpin cellSize={2.5} cellGap={1} label="Probing" className="ml-1" />
+        <span className="shimmer-text ml-1 text-[12px]">Probing…</span>
       ) : (
         <span
           title={meta.tooltip}
