@@ -82,7 +82,11 @@ export interface BoardEvent {
 }
 
 export type SessionState =
-  | "queued" | "spawning" | "running" | "waiting" | "done" | "error";
+  | "queued" | "spawning" | "running"
+  | "idle"     // hot: alive/resumable, no turn in flight — the steady state
+  | "waiting"  // legacy (pre-hot wake model); normalized to idle on host boot
+  | "done"     // legacy; hot sessions never finish, they idle
+  | "error";
 
 export interface AgentSessionRecord {
   id: string;
@@ -92,7 +96,11 @@ export interface AgentSessionRecord {
   procKey?: string;      // live engine process key while running
   harnessSessionId?: string; // for --resume
   wakeOn?: { event: "session-end" | "post"; handle?: string }; // waiting state
-  triggerEventId?: string; // durable intent: the tag/wake event this answers
+  triggerEventId?: string; // durable intent (legacy claim; see turns)
+  // The hot model's turn queue: ONE session per (thread, handle), forever;
+  // every ping becomes a turn. An event is handled iff some record's
+  // turns[] carries it (or legacy triggerEventId matches).
+  turns?: Array<{ eventId: string; state: "pending" | "done" | "failed"; at: number }>;
   reason?: string;       // terminal-state cause ("timeout", "runner-not-found", …)
   exitCode?: number;
   logPath?: string;      // full transcript on the host's disk
@@ -172,8 +180,11 @@ Rules the store enforces (not the callers):
 - `addPost` bumps the thread's `updatedAt`; a `replyTo` chain is flattened to
   the top-level parent (one level deep, always).
 - `addPost` scans the body for `@handle` mentions against the roster and
-  emits `tagged` events (and, once orchestration lands, triggers spawns).
-  Self-mentions by the same author are ignored.
+  emits `tagged` events. Self-mentions by the same author are ignored.
+- **A reply to an agent's exchange implicitly tags that agent** — a reply
+  is a message to its author. Deduped against explicit mentions; never for
+  self-replies, human-rooted exchanges, or host-fallback (suppressTags)
+  posts.
 
 ## Persistence & first run
 

@@ -1,10 +1,12 @@
-// The Elan host — REST surface + persistence, the durable tag→spawn
-// reconciler proven end to end by the mock harness, context rendering,
-// wake-on, outcome extraction, the built child env, and /api/doctor.
-// No network mocks: every test boots the real host in-process on an
-// ephemeral port with a tmp ELAN_STATE_DIR. The mock harness is the ONLY
-// spawner — the real claude/codex binaries are never executed (their stream
-// formats are covered by recorded fixtures against extractOutcome).
+// The Elan host — REST surface + persistence, the HOT-SESSION orchestrator
+// (one record per (thread, handle) forever; every ping is a turn) proven end
+// to end by the resident mock harness, the boot migration that collapses
+// legacy record piles, context rendering, outcome extraction, the built
+// child env, and /api/doctor. No network mocks: every test boots the real
+// host in-process on an ephemeral port with a tmp ELAN_STATE_DIR. The mock
+// harness is the ONLY spawner — the real claude/codex binaries are never
+// executed (their stream formats are covered by recorded fixtures against
+// extractOutcome).
 
 import { afterEach, describe, expect, test } from "bun:test";
 import {
@@ -22,8 +24,10 @@ import {
   ENV_PROBE_END,
   HARNESSES,
   THREAD_CONTEXT_SEPARATOR,
+  TURN_PING_SEPARATOR,
   buildChildEnv,
   extractOutcome,
+  migrateSessions,
   parseClaudeModels,
   parseCodexModelList,
   parseCursorModels,
@@ -62,6 +66,8 @@ const fixtureLines = (name: string): string[] =>
     .split("\n")
     .map((l) => l.trim())
     .filter(Boolean);
+
+const CLI_PATH = join(import.meta.dir, "..", "dev", "elan-cli.ts");
 
 const hosts: ElanHost[] = [];
 const tmpDirs: string[] = [];
@@ -141,10 +147,20 @@ async function makeThread(host: ElanHost, name: string): Promise<{ project: Proj
   return { project, thread };
 }
 
+async function tag(host: ElanHost, threadId: string, body: string): Promise<Post> {
+  return req<Post>(host, "POST", "/api/posts", { threadId, author: "user", body });
+}
+
+/** ALL records for a (thread, handle) — the invariant says this is ≤ 1. */
+const recordsFor = (state: BoardState, threadId: string, handle: string): AgentSessionRecord[] =>
+  state.sessions.filter((s) => s.threadId === threadId && s.handle === handle);
+
+const turnsOf = (r: AgentSessionRecord | undefined) => r?.turns ?? [];
+
 /** Add @ghost-9 (harness with NO registry row) to the roster — the honest
- *  runner-not-found path. Every registry harness now names a real bin
- *  (grok etc. exist on dev machines), so an unrunnable handle must use an
- *  unknown harness id, never a real one. */
+ *  runner-not-found path. Every registry harness names a real bin (grok etc.
+ *  exist on dev machines), so an unrunnable handle must use an unknown
+ *  harness id, never a real one. */
 async function addGhostToRoster(host: ElanHost): Promise<void> {
   const state = await getState(host);
   await req(host, "PUT", "/api/roster", {
@@ -217,31 +233,49 @@ describe("REST + persistence", () => {
     expect(demo.status).toBe(404);
   });
 
-  test("DELETE /api/projects/:id removes the project and its threads", async () => {
+  test("DELETE /api/projects/:id removes the project, threads, and resident children", async () => {
     const host = boot();
     const { project, thread } = await makeThread(host, "Doomed");
-    await req<Post>(host, "POST", "/api/posts", {
-      threadId: thread.id,
-      author: "user",
-      body: "some content",
-    });
+    // Summon the resident mock so a LIVE child exists when the delete lands.
+    await tag(host, thread.id, "@demo-bot get comfortable");
+    const record = await pollUntil(async () => {
+      const s = await getState(host);
+      const r = recordsFor(s, thread.id, "demo-bot")[0];
+      return r?.state === "idle" && r.procKey ? r : undefined;
+    }, "the resident mock to idle");
+    const pid = Number(record.procKey);
+    expect(Number.isFinite(pid)).toBe(true);
+    // The resident child is alive while idle (hot!).
+    expect(() => process.kill(pid, 0)).not.toThrow();
+
     await req(host, "DELETE", `/api/projects/${project.id}`);
 
     const state = await getState(host);
     expect(state.projects.some((p) => p.id === project.id)).toBe(false);
     expect(state.threads.some((t) => t.id === thread.id)).toBe(false);
     expect(state.posts.some((p) => p.threadId === thread.id)).toBe(false);
+    expect(state.sessions.some((s) => s.threadId === thread.id)).toBe(false);
+
+    // The resident child died with its project.
+    await pollUntil(async () => {
+      try {
+        process.kill(pid, 0);
+        return undefined;
+      } catch {
+        return true;
+      }
+    }, "the resident child to die with the project");
 
     const missing = await fetch(`${host.url}/api/projects/nope`, { method: "DELETE" });
     expect(missing.status).toBe(404);
-  });
+  }, 40_000);
 });
 
-// ── 2. mention → spawn → the full mock loop ─────────────────────────────────
+// ── 2. ping → turn: the full mock loop on ONE hot record ────────────────────
 
-describe("tag → spawn (mock harness)", () => {
+describe("ping → turn (resident mock)", () => {
   test(
-    "@demo-bot runs the full loop: queued→done, posts, artifact, status, worktree, log",
+    "@demo-bot runs the full loop: one record, turn done, idle, posts, artifact, status, worktree, log",
     async () => {
       const host = boot();
       const repo = hasGit ? initRepo() : newDir("elan-repo-");
@@ -254,44 +288,36 @@ describe("tag → spawn (mock harness)", () => {
         title: "Do the thing",
         body: "please do the thing",
       });
-      await req<Post>(host, "POST", "/api/posts", {
-        threadId: thread.id,
-        author: "user",
-        body: "@demo-bot please do the thing",
-      });
+      await tag(host, thread.id, "@demo-bot please do the thing");
 
       const done = await pollUntil(async () => {
         const s = await getState(host);
-        return s.sessions.find(
-          (x) => x.threadId === thread.id && x.handle === "demo-bot" && x.state === "done",
-        );
-      }, "demo-bot session to finish");
+        const r = recordsFor(s, thread.id, "demo-bot")[0];
+        return r?.state === "idle" && turnsOf(r)[0]?.state === "done" ? r : undefined;
+      }, "demo-bot's first turn to finish");
 
       const state = await getState(host);
-      // Durable intent: the session carries the tag's event id as its claim.
-      const tag = state.events.find(
+      // THE invariant: one record for the pair; the turn carries the claim.
+      expect(recordsFor(state, thread.id, "demo-bot")).toHaveLength(1);
+      const tagEv = state.events.find(
         (e) => e.threadId === thread.id && e.type === "tagged",
       )!;
-      expect(done.triggerEventId).toBe(tag.id);
+      expect(turnsOf(done).map((t) => t.eventId)).toEqual([tagEv.id]);
       expect(done.queuedAt).toBeDefined();
-      expect(done.exitCode).toBe(0);
-      // The full transcript landed on disk.
+      // The resident child is still alive — hot, never killed for idling.
+      expect(done.procKey).toBeDefined();
+      expect(() => process.kill(Number(done.procKey), 0)).not.toThrow();
+      // The full transcript landed on disk (one log per RECORD).
       expect(done.logPath).toBeDefined();
       expect(existsSync(done.logPath!)).toBe(true);
       expect(readFileSync(done.logPath!, "utf8")).toContain("[out]");
 
       const events = state.events.filter((e) => e.threadId === thread.id);
+      // session-start once per record; session-end NEVER on success.
       expect(
-        events.some((e) => e.type === "session-start" && e.payload.handle === "demo-bot"),
-      ).toBe(true);
-      expect(
-        events.some(
-          (e) =>
-            e.type === "session-end" &&
-            e.payload.handle === "demo-bot" &&
-            e.payload.outcome === "done",
-        ),
-      ).toBe(true);
+        events.filter((e) => e.type === "session-start" && e.payload.handle === "demo-bot"),
+      ).toHaveLength(1);
+      expect(events.some((e) => e.type === "session-end")).toBe(false);
       expect(
         events.some(
           (e) =>
@@ -322,181 +348,392 @@ describe("tag → spawn (mock harness)", () => {
   );
 
   test(
-    "wake-me --on post: session waits, a later post resumes it to completion",
+    "THE clone regression: back-to-back pings → ONE record forever, turns in order",
     async () => {
       const host = boot();
-      const { thread } = await makeThread(host, "Wake Loop");
-      let armed: AgentSessionRecord;
-      process.env.ELAN_MOCK_WAKE = "1";
-      try {
-        await req<Post>(host, "POST", "/api/posts", {
-          threadId: thread.id,
-          author: "user",
-          body: "@demo-bot hold for my go-ahead",
-        });
-        armed = await pollUntil(async () => {
-          const s = await getState(host);
-          return s.sessions.find(
-            (x) =>
-              x.threadId === thread.id && x.handle === "demo-bot" && x.state === "waiting",
-          );
-        }, "demo-bot to arm its wake");
-        expect(armed.wakeOn).toEqual({ event: "post" });
-      } finally {
-        delete process.env.ELAN_MOCK_WAKE;
-      }
+      const { thread } = await makeThread(host, "Clone Bug");
+      // Two tags back to back: the second lands while the first turn runs
+      // (the mock's script takes ~1s). The old wake model cloned agents
+      // here; the hot model just queues turn 2.
+      await tag(host, thread.id, "@demo-bot go one");
+      await tag(host, thread.id, "@demo-bot go two");
 
-      // The wake trigger: a new post by someone else (no mention needed).
-      await req<Post>(host, "POST", "/api/posts", {
-        threadId: thread.id,
-        author: "user",
-        body: "go ahead",
-      });
-      // One record, two lives: the SAME session resumes to completion.
-      const done = await pollUntil(async () => {
+      await pollUntil(async () => {
         const s = await getState(host);
-        return s.sessions.find((x) => x.id === armed.id && x.state === "done");
-      }, "the woken session to finish", 45_000); // wake rides two spawn cycles — generous under parallel-suite CPU contention
-
-      const state = await getState(host);
-      const outcomes = state.events
-        .filter(
-          (e) =>
-            e.threadId === thread.id &&
-            e.type === "session-end" &&
-            e.payload.sessionId === done.id,
+        return s.posts.some(
+          (p) => p.threadId === thread.id && p.author === "demo-bot" && p.body.startsWith("turn 2 ack:"),
         )
-        .map((e) => e.payload.outcome);
-      // One record, two lives. The waiting end always precedes the done end
-      // (events append in time order), but a slow first exit can merge into
-      // the wake — assert the invariant parts order-independently.
-      expect(outcomes[outcomes.length - 1]).toBe("done");
-      expect(outcomes).toContain("waiting");
-      // Durable wake consumption: the trigger post's id became the claim.
-      const goAhead = state.posts.find((p) => p.body === "go ahead")!;
-      expect(done.triggerEventId).toBe(goAhead.id);
+          ? true
+          : undefined;
+      }, "turn 2 to be acked");
+
+      let state = await getState(host);
+      // Exactly ONE session record for (thread, demo-bot), ever.
+      const records = recordsFor(state, thread.id, "demo-bot");
+      expect(records).toHaveLength(1);
+      const tagEvents = state.events.filter(
+        (e) => e.threadId === thread.id && e.type === "tagged",
+      );
+      expect(tagEvents).toHaveLength(2);
+      // Both pings claimed as turns on THE record, run in order.
+      expect(turnsOf(records[0]).map((t) => t.eventId)).toEqual(tagEvents.map((e) => e.id));
+      expect(turnsOf(records[0]).every((t) => t.state === "done")).toBe(true);
+      // The script ran once — turn 2 was an injected message, not a clone.
       expect(
-        state.posts.some(
-          (p) => p.threadId === thread.id && p.author === "demo-bot" && p.body.startsWith("Done —"),
+        state.posts.filter(
+          (p) => p.threadId === thread.id && p.body.startsWith("Looking at this now."),
         ),
-      ).toBe(true);
+      ).toHaveLength(1);
+      expect(
+        state.events.filter((e) => e.threadId === thread.id && e.type === "session-start"),
+      ).toHaveLength(1);
+      const pidBefore = records[0].procKey;
+      expect(pidBefore).toBeDefined();
+
+      // Assert again via a 3rd tag after idle: same record, same child.
+      await tag(host, thread.id, "@demo-bot go three");
+      await pollUntil(async () => {
+        const s = await getState(host);
+        return s.posts.some(
+          (p) => p.threadId === thread.id && p.body.startsWith("turn 3 ack:"),
+        )
+          ? true
+          : undefined;
+      }, "turn 3 to be acked");
+
+      state = await getState(host);
+      const after = recordsFor(state, thread.id, "demo-bot");
+      expect(after).toHaveLength(1);
+      expect(after[0].id).toBe(records[0].id);
+      expect(turnsOf(after[0])).toHaveLength(3);
+      expect(turnsOf(after[0]).every((t) => t.state === "done")).toBe(true);
+      // Same resident child across turns — resurrection was not needed.
+      expect(after[0].procKey).toBe(pidBefore);
+      expect(state.events.some((e) => e.type === "session-end")).toBe(false);
     },
     40_000,
   );
 
   test(
-    "a tag while a session is live is absorbed durably, not respawned",
+    "a reply to the agent's exchange IS a ping: a turn on the SAME record",
     async () => {
       const host = boot();
-      const { thread } = await makeThread(host, "Absorb");
-      process.env.ELAN_MOCK_WAKE = "1"; // arm-and-exit keeps the loop quick
-      try {
-        await req<Post>(host, "POST", "/api/posts", {
-          threadId: thread.id,
-          author: "user",
-          body: "@demo-bot first tag @demo-bot second mention same post is one tag",
-        });
-        await pollUntil(async () => {
-          const s = await getState(host);
-          return s.sessions.find(
-            (x) => x.threadId === thread.id && x.handle === "demo-bot" && x.state === "waiting",
-          );
-        }, "the first session to arm");
-      } finally {
-        delete process.env.ELAN_MOCK_WAKE;
-      }
+      const { thread } = await makeThread(host, "Reply Ping");
+      await tag(host, thread.id, "@demo-bot do the thing");
+      await pollUntil(async () => {
+        const s = await getState(host);
+        const r = recordsFor(s, thread.id, "demo-bot")[0];
+        return r?.state === "idle" && turnsOf(r)[0]?.state === "done" ? r : undefined;
+      }, "the first turn to finish");
+
+      // Reply to the agent's root post — no @mention anywhere in the body.
+      const state0 = await getState(host);
+      const root = state0.posts.find(
+        (p) => p.threadId === thread.id && p.author === "demo-bot" && !p.replyTo,
+      )!;
+      await req<Post>(host, "POST", "/api/posts", {
+        threadId: thread.id,
+        author: "user",
+        body: "actually, please also check the flake",
+        replyTo: root.id,
+      });
+
+      await pollUntil(async () => {
+        const s = await getState(host);
+        return s.posts.some(
+          (p) => p.threadId === thread.id && p.body.startsWith("turn 2 ack:"),
+        )
+          ? true
+          : undefined;
+      }, "the reply-ping turn to be acked");
 
       const state = await getState(host);
+      const records = recordsFor(state, thread.id, "demo-bot");
+      expect(records).toHaveLength(1);
+      expect(turnsOf(records[0])).toHaveLength(2);
+      expect(turnsOf(records[0]).every((t) => t.state === "done")).toBe(true);
+      // The implicit tag event exists and is claimed by the same record.
       const tags = state.events.filter(
         (e) => e.threadId === thread.id && e.type === "tagged",
       );
-      // Every tagged event is claimed by exactly one session record.
-      for (const tag of tags) {
-        expect(
-          state.sessions.filter((s) => s.triggerEventId === tag.id).length,
-        ).toBe(1);
-      }
+      expect(tags).toHaveLength(2);
+      expect(tags[1].actor).toBe("user");
+    },
+    40_000,
+  );
+
+  test(
+    "residency: the resident child survives across two turns (same pid)",
+    async () => {
+      const host = boot();
+      const { thread } = await makeThread(host, "Residency");
+      await tag(host, thread.id, "@demo-bot turn one");
+      const afterOne = await pollUntil(async () => {
+        const s = await getState(host);
+        const r = recordsFor(s, thread.id, "demo-bot")[0];
+        return r?.state === "idle" && turnsOf(r)[0]?.state === "done" ? r : undefined;
+      }, "turn 1 to finish");
+      const pid = afterOne.procKey;
+      expect(pid).toBeDefined();
+
+      await tag(host, thread.id, "@demo-bot turn two");
+      const afterTwo = await pollUntil(async () => {
+        const s = await getState(host);
+        const r = recordsFor(s, thread.id, "demo-bot")[0];
+        return turnsOf(r).length === 2 && turnsOf(r)[1].state === "done" ? r : undefined;
+      }, "turn 2 to finish");
+      // The child was NOT respawned: same pid, still alive.
+      expect(afterTwo.procKey).toBe(pid);
+      expect(() => process.kill(Number(pid), 0)).not.toThrow();
+      expect((await getState(host)).sessions).toHaveLength(1);
+    },
+    40_000,
+  );
+
+  test(
+    "resurrection: a dead resident child is replaced on the next ping — same record",
+    async () => {
+      const host = boot();
+      const { thread } = await makeThread(host, "Resurrection");
+      await tag(host, thread.id, "@demo-bot live once");
+      const idle = await pollUntil(async () => {
+        const s = await getState(host);
+        const r = recordsFor(s, thread.id, "demo-bot")[0];
+        return r?.state === "idle" && turnsOf(r)[0]?.state === "done" ? r : undefined;
+      }, "turn 1 to finish");
+      const pid = Number(idle.procKey);
+
+      // Kill the hot child between turns (SIGKILL — no goodbye).
+      process.kill(pid, "SIGKILL");
+      await pollUntil(async () => {
+        const s = await getState(host);
+        const r = recordsFor(s, thread.id, "demo-bot")[0];
+        return r?.procKey === undefined ? true : undefined;
+      }, "the host to notice the child died");
+      // Idle death is NOT an ending: no session-end, no error, still idle.
+      let state = await getState(host);
+      expect(recordsFor(state, thread.id, "demo-bot")[0].state).toBe("idle");
+      expect(state.events.some((e) => e.type === "session-end")).toBe(false);
+
+      await tag(host, thread.id, "@demo-bot rise");
+      await pollUntil(async () => {
+        const s = await getState(host);
+        return s.posts.some(
+          (p) => p.threadId === thread.id && p.body.startsWith("turn 2 ack:"),
+        )
+          ? true
+          : undefined;
+      }, "the resurrected turn to be acked");
+
+      state = await getState(host);
+      const records = recordsFor(state, thread.id, "demo-bot");
+      expect(records).toHaveLength(1); // resurrection, not duplication
+      expect(records[0].id).toBe(idle.id);
+      expect(turnsOf(records[0])).toHaveLength(2);
+      expect(turnsOf(records[0])[1].state).toBe("done");
+      expect(records[0].procKey).not.toBe(String(pid)); // a NEW child
+      // Still exactly one session-start, ever (first spawn only).
+      expect(
+        state.events.filter(
+          (e) => e.threadId === thread.id && e.type === "session-start",
+        ),
+      ).toHaveLength(1);
     },
     40_000,
   );
 });
 
-// ── 3. durability: restarts recover exactly the unhandled work ──────────────
+// ── 3. boot migration + durable turns across restarts ───────────────────────
 
-describe("durable intent across restarts", () => {
+describe("boot migration (legacy → hot)", () => {
+  test("migrateSessions collapses a legacy pile to ONE record per (thread, handle)", () => {
+    const now = Date.now();
+    const mk = (over: Partial<AgentSessionRecord>): AgentSessionRecord => ({
+      id: crypto.randomUUID(),
+      threadId: "t1",
+      handle: "grok-4.5",
+      state: "done",
+      startedAt: now - 1_000_000,
+      ...over,
+    });
+    const sessions: AgentSessionRecord[] = [
+      mk({ id: "s1", state: "waiting", wakeOn: { event: "post" }, triggerEventId: "e1", startedAt: now - 600_000 }),
+      mk({ id: "s2", state: "done", triggerEventId: "e2", startedAt: now - 500_000 }),
+      mk({ id: "s3", state: "error", reason: "timeout", triggerEventId: "e3", startedAt: now - 400_000 }),
+      mk({ id: "s4", state: "done", reason: "absorbed-by-live-session", triggerEventId: "e4", startedAt: now - 300_000 }),
+      mk({ id: "s5", state: "done", reason: "superseded-by-wake", triggerEventId: "e5", startedAt: now - 200_000 }),
+      mk({ id: "s6", state: "running", harnessSessionId: "hs-keep", triggerEventId: "e6", logPath: "/tmp/s6.log", startedAt: now - 100_000 }),
+      // A second (thread, handle): markers only.
+      mk({ id: "s7", handle: "ghost-9", state: "error", reason: "unknown-handle", triggerEventId: "e7", startedAt: now - 250_000 }),
+      mk({ id: "s8", handle: "ghost-9", state: "error", reason: "unknown-handle", triggerEventId: "e8", startedAt: now - 150_000 }),
+    ];
+    const state: BoardState = {
+      projects: [], roster: [], threads: [], posts: [], events: [], sessions,
+    };
+
+    const { state: migrated, changed, notes } = migrateSessions(state, now);
+    expect(changed).toBe(true);
+    expect(migrated.sessions).toHaveLength(2);
+
+    const grok = migrated.sessions.find((s) => s.handle === "grok-4.5")!;
+    // Survivor = the record WITH a harnessSessionId; the id is preserved.
+    expect(grok.id).toBe("s6");
+    expect(grok.harnessSessionId).toBe("hs-keep");
+    expect(grok.logPath).toBe("/tmp/s6.log");
+    // running at shutdown → idle + orphaned-by-restart, never error.
+    expect(grok.state).toBe("idle");
+    expect(grok.reason).toBe("orphaned-by-restart");
+    expect(grok.wakeOn).toBeUndefined();
+    expect(grok.triggerEventId).toBeUndefined();
+    // EVERY legacy claim became a done turn — nothing can respawn.
+    expect(turnsOf(grok).map((t) => t.eventId).sort()).toEqual([
+      "e1", "e2", "e3", "e4", "e5", "e6",
+    ]);
+    expect(turnsOf(grok).every((t) => t.state === "done")).toBe(true);
+
+    const ghost = migrated.sessions.find((s) => s.handle === "ghost-9")!;
+    expect(turnsOf(ghost).map((t) => t.eventId).sort()).toEqual(["e7", "e8"]);
+    expect(ghost.state).toBe("idle"); // markers-only group → idle bookkeeping
+
+    // The merge is loud: one note per collapsed group.
+    expect(notes.some((n) => n.includes("merged 6 session records"))).toBe(true);
+    expect(notes.some((n) => n.includes("merged 2 session records"))).toBe(true);
+  });
+
   test(
-    "restart mid-run: exactly one session per triggerEventId, orphan errors cleanly",
+    "a legacy state file (6 + 2 records) boots to exactly 1 + 1 with no spawns",
     async () => {
       const stateDir = newDir("elan-state-");
       const hostA = boot(stateDir);
-      const { thread } = await makeThread(hostA, "Restart");
-      await req<Post>(hostA, "POST", "/api/posts", {
-        threadId: thread.id,
-        author: "user",
-        body: "@demo-bot do the durable thing",
-      });
-      // The claim + spawn happen synchronously in the mutation's reconciler
-      // pass — stop immediately, mid-run, before the mock can finish.
+      const { thread } = await makeThread(hostA, "Legacy Pile");
       hostA.stop();
 
-      const disk = JSON.parse(readFileSync(join(stateDir, "board.json"), "utf8")) as BoardState;
-      const tag = disk.events.find((e) => e.type === "tagged")!;
-      expect(disk.sessions.filter((s) => s.triggerEventId === tag.id).length).toBe(1);
-      expect(["queued", "spawning", "running"]).toContain(
-        disk.sessions.find((s) => s.triggerEventId === tag.id)!.state,
+      const file = join(stateDir, "board.json");
+      const disk = JSON.parse(readFileSync(file, "utf8")) as BoardState;
+      const now = Date.now();
+      // Recent (not stale) tagged events, every one already claimed by a
+      // legacy record's triggerEventId.
+      for (let i = 1; i <= 8; i++) {
+        disk.events.push({
+          id: `e${i}`,
+          threadId: thread.id,
+          actor: "user",
+          type: "tagged",
+          payload: { handle: i <= 6 ? "demo-bot" : "ghost-9" },
+          at: now - 60_000 * i,
+        });
+      }
+      const mk = (over: Partial<AgentSessionRecord>): AgentSessionRecord =>
+        ({
+          id: crypto.randomUUID(),
+          threadId: thread.id,
+          handle: "demo-bot",
+          state: "done",
+          startedAt: now - 1_000_000,
+          ...over,
+        }) as AgentSessionRecord;
+      disk.sessions.push(
+        mk({ id: "s1", state: "waiting", wakeOn: { event: "post" }, triggerEventId: "e1", startedAt: now - 600_000 }),
+        mk({ id: "s2", state: "done", triggerEventId: "e2", startedAt: now - 500_000 }),
+        mk({ id: "s3", state: "error", reason: "timeout", triggerEventId: "e3", startedAt: now - 400_000 }),
+        mk({ id: "s4", state: "done", reason: "absorbed-by-live-session", triggerEventId: "e4", startedAt: now - 300_000 }),
+        mk({ id: "s5", state: "done", reason: "superseded-by-wake", triggerEventId: "e5", startedAt: now - 200_000 }),
+        mk({ id: "s6", state: "spawning", harnessSessionId: "hs-keep", triggerEventId: "e6", startedAt: now - 100_000 }),
+        mk({ id: "s7", handle: "ghost-9", state: "error", reason: "unknown-handle", triggerEventId: "e7", startedAt: now - 250_000 }),
+        mk({ id: "s8", handle: "ghost-9", state: "error", reason: "unknown-handle", triggerEventId: "e8", startedAt: now - 150_000 }),
       );
+      writeFileSync(file, JSON.stringify(disk));
 
       const hostB = boot(stateDir);
-      const recovered = await pollUntil(async () => {
-        const s = await getState(hostB);
-        return s.sessions.find(
-          (x) =>
-            x.triggerEventId === tag.id && (x.state === "done" || x.state === "error"),
-        );
-      }, "the claimed session to settle after restart");
-      // It was running when the host died → orphaned, never silently re-run.
-      expect(recovered.state).toBe("error");
-      expect(recovered.reason).toBe("orphaned-by-restart");
+      const state = await getState(hostB);
+      expect(recordsFor(state, thread.id, "demo-bot")).toHaveLength(1);
+      expect(recordsFor(state, thread.id, "ghost-9")).toHaveLength(1);
+      const demo = recordsFor(state, thread.id, "demo-bot")[0];
+      expect(demo.id).toBe("s6");
+      expect(demo.harnessSessionId).toBe("hs-keep");
+      expect(demo.state).toBe("idle");
+      expect(turnsOf(demo)).toHaveLength(6);
+      expect(turnsOf(demo).every((t) => t.state === "done")).toBe(true);
 
-      // Give the reconciler ticks a chance to misbehave, then re-assert:
-      // still exactly one session for the tag — no duplicate spawn, ever.
-      await pollUntil(async () => {
-        const s = await getState(hostB);
-        return s.events.some(
-          (e) =>
-            e.type === "session-end" &&
-            e.payload.sessionId === recovered.id &&
-            e.payload.outcome === "error",
-        )
-          ? true
-          : undefined;
-      }, "the orphan session-end event");
+      // Give the reconciler ticks a chance to misbehave: no spawns for the
+      // already-claimed events, no new records, ever.
       await new Promise((r) => setTimeout(r, 2_500)); // > one 2s tick
-      const s = await getState(hostB);
-      expect(s.sessions.filter((x) => x.triggerEventId === tag.id).length).toBe(1);
+      const after = await getState(hostB);
+      expect(after.sessions).toHaveLength(2);
+      expect(after.events.some((e) => e.type === "session-start")).toBe(false);
+      expect(turnsOf(recordsFor(after, thread.id, "demo-bot")[0]).every((t) => t.state === "done")).toBe(true);
+
+      // The collapse landed on DISK at boot, before any mutation.
+      hostB.stop();
+      const persisted = JSON.parse(readFileSync(file, "utf8")) as BoardState;
+      expect(persisted.sessions).toHaveLength(2);
     },
     40_000,
   );
 
   test(
-    "boot marks fake running sessions orphaned and stale tags skipped",
+    "restart mid-turn: the record survives as idle/orphaned, the NEXT ping runs",
     async () => {
       const stateDir = newDir("elan-state-");
       const hostA = boot(stateDir);
-      const { thread } = await makeThread(hostA, "Orphanage");
+      const { thread } = await makeThread(hostA, "Restart");
+      await tag(hostA, thread.id, "@demo-bot do the durable thing");
+      // Wait for the turn to be IN FLIGHT (child spawned), then die mid-run.
+      await pollUntil(async () => {
+        const s = await getState(hostA);
+        const r = recordsFor(s, thread.id, "demo-bot")[0];
+        return r?.state === "running" && r.procKey ? r : undefined;
+      }, "the turn to be in flight");
       hostA.stop();
 
-      // Forge a crash: a "running" session and a >24h-old unhandled tag.
+      const disk = JSON.parse(readFileSync(join(stateDir, "board.json"), "utf8")) as BoardState;
+      const tagEv = disk.events.find((e) => e.type === "tagged")!;
+      expect(disk.sessions).toHaveLength(1);
+      expect(turnsOf(disk.sessions[0]).map((t) => t.eventId)).toEqual([tagEv.id]);
+
+      const hostB = boot(stateDir);
+      const recovered = await pollUntil(async () => {
+        const s = await getState(hostB);
+        const r = recordsFor(s, thread.id, "demo-bot")[0];
+        return r?.state === "idle" ? r : undefined;
+      }, "the orphaned record to settle idle");
+      // NOT an error, no session-end — the interrupted turn is failed and
+      // the record is simply idle.
+      expect(recovered.reason).toBe("orphaned-by-restart");
+      expect(turnsOf(recovered)[0].state).toBe("failed");
+      expect(
+        (await getState(hostB)).events.filter(
+          (e) => e.type === "session-end" && e.at > recovered.startedAt,
+        ),
+      ).toHaveLength(0);
+
+      // The next ping simply runs a turn — on the SAME record.
+      await tag(hostB, thread.id, "@demo-bot carry on");
+      await pollUntil(async () => {
+        const s = await getState(hostB);
+        return s.posts.some(
+          (p) => p.threadId === thread.id && p.body.startsWith("turn 2 ack:"),
+        )
+          ? true
+          : undefined;
+      }, "the post-restart turn to be acked");
+      const state = await getState(hostB);
+      expect(recordsFor(state, thread.id, "demo-bot")).toHaveLength(1);
+      expect(recordsFor(state, thread.id, "demo-bot")[0].id).toBe(recovered.id);
+    },
+    40_000,
+  );
+
+  test(
+    "stale (>24h) tags at boot are claimed as done turns — no spawn, no post",
+    async () => {
+      const stateDir = newDir("elan-state-");
+      const hostA = boot(stateDir);
+      const { thread } = await makeThread(hostA, "Archaeology");
+      hostA.stop();
+
       const file = join(stateDir, "board.json");
       const disk = JSON.parse(readFileSync(file, "utf8")) as BoardState;
-      const fakeSession: AgentSessionRecord = {
-        id: "fake-running",
-        threadId: thread.id,
-        handle: "demo-bot",
-        state: "running",
-        procKey: "99999",
-        startedAt: Date.now() - 60_000,
-      };
       const staleTag: BoardEvent = {
         id: "stale-tag",
         threadId: thread.id,
@@ -505,158 +742,113 @@ describe("durable intent across restarts", () => {
         payload: { handle: "demo-bot" },
         at: Date.now() - 25 * 60 * 60 * 1000,
       };
-      disk.sessions.push(fakeSession);
       disk.events.push(staleTag);
       writeFileSync(file, JSON.stringify(disk));
 
       const hostB = boot(stateDir);
-      const orphan = await pollUntil(async () => {
+      const claimed = await pollUntil(async () => {
         const s = await getState(hostB);
-        const x = s.sessions.find((r) => r.id === "fake-running");
-        return x?.state === "error" ? x : undefined;
-      }, "the fake running session to be orphaned", 10_000);
-      expect(orphan.reason).toBe("orphaned-by-restart");
+        const r = recordsFor(s, thread.id, "demo-bot")[0];
+        return turnsOf(r).some((t) => t.eventId === "stale-tag") ? r : undefined;
+      }, "the stale tag to be claimed", 10_000);
+      expect(turnsOf(claimed).find((t) => t.eventId === "stale-tag")!.state).toBe("done");
+      expect(claimed.state).toBe("idle"); // settled, nothing pending
 
       const state = await getState(hostB);
-      expect(
-        state.events.some(
-          (e) =>
-            e.type === "session-end" &&
-            e.payload.sessionId === "fake-running" &&
-            e.payload.outcome === "error",
-        ),
-      ).toBe(true);
-
-      // The stale tag got a claim marker, not a spawn — and no ⚠︎ post spam.
-      const staleClaim = await pollUntil(async () => {
-        const s = await getState(hostB);
-        return s.sessions.find((r) => r.triggerEventId === "stale-tag");
-      }, "the stale tag to be claimed", 10_000);
-      expect(staleClaim.state).toBe("error");
-      expect(staleClaim.reason).toBe("stale-skipped");
-      expect(state.posts.filter((p) => p.body.startsWith("⚠︎")).length).toBe(0);
+      expect(recordsFor(state, thread.id, "demo-bot")).toHaveLength(1);
+      expect(state.events.some((e) => e.type === "session-start")).toBe(false); // no spawn
+      expect(state.posts.filter((p) => p.body.startsWith("⚠︎"))).toHaveLength(0);
     },
     40_000,
   );
 });
 
-// ── 4. limits: the per-thread budget breaker ────────────────────────────────
+// ── 4. limits: the per-thread turn budget ───────────────────────────────────
 
-describe("per-thread spawn budget", () => {
+describe("per-thread turn budget", () => {
   test("UNCAPPED by default — agent chains are the product, not a bug", async () => {
     const host = boot(); // no ELAN_THREAD_BUDGET, no threadBudget override
     const { thread } = await makeThread(host, "Uncapped");
     for (let i = 0; i < 3; i++) {
-      await req(host, "POST", "/api/posts", {
-        threadId: thread.id,
-        author: "user",
-        body: `@demo-bot go ${i}`,
-      });
+      await tag(host, thread.id, `@demo-bot go ${i}`);
     }
-    // Every tag must be claimed by a real session or an absorbed marker —
-    // never a budget drop.
+    // Every tag becomes a real turn on THE record — never a budget drop.
     await pollUntil(async () => {
       const s = await getState(host);
-      return s.sessions.filter((x) => x.handle === "demo-bot").length >= 3;
-    });
+      const r = recordsFor(s, thread.id, "demo-bot")[0];
+      return turnsOf(r).length === 3 && turnsOf(r).every((t) => t.state === "done")
+        ? true
+        : undefined;
+    }, "all three turns to finish");
     const s = await getState(host);
-    expect(s.sessions.some((x) => x.reason === "budget-exceeded")).toBe(false);
-    expect(s.posts.some((p) => p.body.includes("spawn budget"))).toBe(false);
-  });
+    expect(recordsFor(s, thread.id, "demo-bot")).toHaveLength(1);
+    expect(s.posts.some((p) => p.body.includes("budget"))).toBe(false);
+  }, 40_000);
 
   test(
-    "the tag past the budget is dropped with an error session + one ⚠︎ post",
+    "the ping past the budget is dropped: a failed turn + one ⚠︎ post, still ONE record",
     async () => {
-      process.env.ELAN_THREAD_BUDGET = "2";
-      let host: ElanHost;
-      try {
-        host = boot(); // reads ELAN_THREAD_BUDGET at boot
-      } finally {
-        delete process.env.ELAN_THREAD_BUDGET;
-      }
+      const host = boot(undefined, { threadBudget: 2 });
       const { thread } = await makeThread(host, "Budget");
       await addGhostToRoster(host);
 
-      // ghost-9's harness has no registry row → each tag becomes a start
-      // attempt that errors fast (runner-not-found), which still counts as a
-      // start.
+      // ghost-9's harness has no registry row → each turn errors fast
+      // (runner-not-found), which still counts as a turn run.
       for (let i = 1; i <= 2; i++) {
-        await req<Post>(host, "POST", "/api/posts", {
-          threadId: thread.id,
-          author: "user",
-          body: `@ghost-9 attempt ${i}`,
-        });
+        await tag(host, thread.id, `@ghost-9 attempt ${i}`);
         await pollUntil(async () => {
           const s = await getState(host);
-          const errs = s.sessions.filter(
-            (x) =>
-              x.threadId === thread.id &&
-              x.handle === "ghost-9" &&
-              x.state === "error" &&
-              x.reason === "runner-not-found",
-          );
-          return errs.length >= i ? true : undefined;
-        }, `attempt ${i} to error`);
+          const r = recordsFor(s, thread.id, "ghost-9")[0];
+          const failed = turnsOf(r).filter((t) => t.state === "failed");
+          return failed.length >= i ? true : undefined;
+        }, `attempt ${i} to fail`);
       }
 
-      await req<Post>(host, "POST", "/api/posts", {
-        threadId: thread.id,
-        author: "user",
-        body: "@ghost-9 attempt 3 — over budget",
-      });
-      const dropped = await pollUntil(async () => {
+      await tag(host, thread.id, "@ghost-9 attempt 3 — over budget");
+      await pollUntil(async () => {
         const s = await getState(host);
-        return s.sessions.find(
-          (x) =>
-            x.threadId === thread.id &&
-            x.handle === "ghost-9" &&
-            x.reason === "budget-exceeded",
-        );
-      }, "the third tag to hit the budget");
-      expect(dropped.state).toBe("error");
+        const r = recordsFor(s, thread.id, "ghost-9")[0];
+        return turnsOf(r).length === 3 ? true : undefined;
+      }, "the third ping to be claimed");
 
       const state = await getState(host);
+      // Still ONE record — a budget drop mints no marker records.
+      const records = recordsFor(state, thread.id, "ghost-9");
+      expect(records).toHaveLength(1);
+      expect(turnsOf(records[0])).toHaveLength(3);
+      expect(turnsOf(records[0]).every((t) => t.state === "failed")).toBe(true);
       const budgetPosts = state.posts.filter(
         (p) =>
           p.threadId === thread.id &&
           p.body.startsWith("⚠︎") &&
           p.body.includes("budget"),
       );
-      expect(budgetPosts.length).toBe(1);
-      // Exactly three sessions: two real attempts + one budget drop.
-      expect(
-        state.sessions.filter(
-          (s) => s.threadId === thread.id && s.handle === "ghost-9",
-        ).length,
-      ).toBe(3);
+      expect(budgetPosts).toHaveLength(1);
     },
     40_000,
   );
 });
 
-// ── 5. preflight: unknown harness / missing runner fails honestly ───────────
+// ── 5. preflight: unknown harness / missing runner fails the TURN honestly ──
 
 describe("runner preflight", () => {
-  test("@ghost-9 (unknown harness) → runner-not-found session, session-end(error), ⚠︎ post", async () => {
+  test("@ghost-9 (unknown harness) → failed turn, error badge, session-end(error), ⚠︎ post", async () => {
     const host = boot();
     const { thread } = await makeThread(host, "No Adapter");
     await addGhostToRoster(host);
-    await req<Post>(host, "POST", "/api/posts", {
-      threadId: thread.id,
-      author: "user",
-      body: "@ghost-9 hi",
-    });
+    await tag(host, thread.id, "@ghost-9 hi");
 
     const errored = await pollUntil(async () => {
       const s = await getState(host);
-      return s.sessions.find(
-        (x) => x.threadId === thread.id && x.handle === "ghost-9" && x.state === "error",
-      );
-    }, "ghost-9 session to error", 10_000);
+      const r = recordsFor(s, thread.id, "ghost-9")[0];
+      return r?.state === "error" ? r : undefined;
+    }, "ghost-9's turn to fail", 10_000);
     expect(errored.reason).toBe("runner-not-found");
-    expect(errored.triggerEventId).toBeDefined();
+    expect(turnsOf(errored)).toHaveLength(1);
+    expect(turnsOf(errored)[0].state).toBe("failed");
 
     const state = await getState(host);
+    // session-end fires ONLY on turn failure — and this is one.
     expect(
       state.events.some(
         (e) =>
@@ -675,6 +867,16 @@ describe("runner preflight", () => {
           p.body.includes("ghost-harness"),
       ),
     ).toBe(true);
+
+    // The error badge never blocks the loop: a repeat ping claims turn 2 on
+    // the SAME record and fails it just as honestly.
+    await tag(host, thread.id, "@ghost-9 try again");
+    await pollUntil(async () => {
+      const s = await getState(host);
+      const r = recordsFor(s, thread.id, "ghost-9")[0];
+      return turnsOf(r).length === 2 && turnsOf(r)[1].state === "failed" ? true : undefined;
+    }, "the repeat ping to fail its turn too", 10_000);
+    expect(recordsFor(await getState(host), thread.id, "ghost-9")).toHaveLength(1);
   });
 
   test("whichOnPath resolves against an explicit PATH only", () => {
@@ -898,7 +1100,7 @@ describe("extractOutcome", () => {
     expect(extractOutcome("devin-raw", [], 1)).toEqual({ ok: false, text: "" });
   });
 
-  test("raw (mock): last stdout line; stripAnsi scrubs CSI + OSC sequences", () => {
+  test("raw: last stdout line; stripAnsi scrubs CSI + OSC sequences", () => {
     expect(extractOutcome("raw", ["first", "last line"], 0)).toEqual({
       ok: true,
       text: "last line",
@@ -983,9 +1185,9 @@ describe("discovery parsers", () => {
   });
 });
 
-// ── 6c. the harness registry: runner argv shapes (pure) ─────────────────────
+// ── 6c. the harness registry: runner argv + residency shapes (pure) ─────────
 
-describe("HARNESSES runners", () => {
+describe("HARNESSES registry", () => {
   const baseCtx: RunnerCtx = {
     binPath: "/bin/fake",
     prompt: "THE CONTEXT",
@@ -995,40 +1197,93 @@ describe("HARNESSES runners", () => {
     sessionDir: "/state/sessions",
   };
   const spec = (harness: string, ctx: Partial<RunnerCtx> = {}): RunnerSpec => {
-    const r = HARNESSES[harness].runner({ ...baseCtx, ...ctx });
+    const r = HARNESSES[harness].runner!({ ...baseCtx, ...ctx });
     if (!("argv" in r)) throw new Error(`runner errored: ${r.error}`);
     return r;
   };
 
-  test("every registry row is complete", () => {
+  test("every registry row is complete; runner XOR residency", () => {
     for (const [id, p] of Object.entries(HARNESSES)) {
       expect(p.id).toBe(id);
       expect(p.displayName.length).toBeGreaterThan(0);
       expect(p.bin.length).toBeGreaterThan(0);
-      expect(typeof p.runner).toBe("function");
       expect(typeof p.extract).toBe("string");
+      // Exactly one execution strategy per harness.
+      expect(Boolean(p.runner) !== Boolean(p.residency)).toBe(true);
     }
     // The registry covers exactly the v1 harness set.
     expect(Object.keys(HARNESSES).sort()).toEqual([
       "claude-code", "codex", "cursor", "devin", "grok", "mock", "opencode", "pi", "pool",
     ]);
+    // The resident set is exactly claude-code, pi, and the mock.
+    expect(
+      Object.entries(HARNESSES)
+        .filter(([, p]) => p.residency)
+        .map(([id]) => id)
+        .sort(),
+    ).toEqual(["claude-code", "mock", "pi"]);
   });
 
-  test("claude-code: native --append-system-prompt; resume drops context", () => {
-    const fresh = spec("claude-code", { model: "claude-fable-5" });
-    expect(fresh.argv).toEqual([
-      "/bin/fake", "-p", "THE CONTEXT", "--output-format", "stream-json", "--verbose",
-      "--permission-mode", "bypassPermissions", "--model", "claude-fable-5",
+  test("claude-code residency: bidirectional stream-json, NO prompt argv, resume on resurrection", () => {
+    const res = HARNESSES["claude-code"].residency!;
+    expect(
+      res.argv({ binPath: "/bin/fake", instructions: "THE INSTRUCTIONS", model: "claude-fable-5" }),
+    ).toEqual([
+      "/bin/fake", "-p",
+      "--input-format", "stream-json", "--output-format", "stream-json",
+      "--verbose", "--permission-mode", "bypassPermissions",
       "--append-system-prompt", "THE INSTRUCTIONS",
+      "--model", "claude-fable-5",
     ]);
-    const resumed = spec("claude-code", {
-      prompt: "WAKE",
-      resume: { harnessSessionId: "hs-1" },
+    const resumed = res.argv({
+      binPath: "/bin/fake", instructions: "I", resume: "hs-1",
     });
-    expect(resumed.argv).toContain("--resume");
-    expect(resumed.argv).toContain("hs-1");
-    expect(resumed.argv).toContain("WAKE");
-    expect(resumed.argv).not.toContain("--append-system-prompt");
+    expect(resumed).toContain("--resume");
+    expect(resumed[resumed.indexOf("--resume") + 1]).toBe("hs-1");
+    // No prompt ever rides argv — turns are stdin messages.
+    expect(resumed).not.toContain("THE CONTEXT");
+
+    // The turn wire shape (cribbed from src/lib/adapters/claude-code).
+    expect(JSON.parse(res.encodeTurn("do it", 2))).toEqual({
+      type: "user",
+      message: { role: "user", content: [{ type: "text", text: "do it" }] },
+    });
+    expect(res.isTurnEnd({ type: "result", subtype: "success" })).toBe(true);
+    expect(res.isTurnEnd({ type: "assistant" })).toBe(false);
+  });
+
+  test("pi residency: --mode rpc, prompt commands, --session-id resurrection", () => {
+    const res = HARNESSES.pi.residency!;
+    expect(
+      res.argv({ binPath: "/bin/fake", instructions: "I", model: "anthropic/claude-fable-5" }),
+    ).toEqual([
+      "/bin/fake", "--mode", "rpc",
+      "--model", "anthropic/claude-fable-5",
+      "--append-system-prompt", "I",
+    ]);
+    const resumed = res.argv({ binPath: "/bin/fake", instructions: "I", resume: "pi-sess" });
+    expect(resumed[resumed.indexOf("--session-id") + 1]).toBe("pi-sess");
+
+    // Turns are prompt commands per src/lib/adapters/pi/protocol.ts.
+    expect(JSON.parse(res.encodeTurn("hello", 3))).toEqual({
+      id: "elan-turn-3",
+      type: "prompt",
+      message: "hello",
+    });
+    expect(res.isTurnEnd({ type: "agent_end" })).toBe(true);
+    expect(res.isTurnEnd({ type: "response", command: "prompt", success: true })).toBe(true);
+    expect(res.isTurnEnd({ type: "turn_end" })).toBe(false);
+  });
+
+  test("mock residency: bun + the agent script; turns as {prompt, turn} lines", () => {
+    const res = HARNESSES.mock.residency!;
+    const argv = res.argv({ binPath: "/bin/bun", instructions: "I" });
+    expect(argv[0]).toBe("/bin/bun");
+    expect(argv[1]).toEndWith("mock-agent.ts");
+    expect(JSON.parse(res.encodeTurn("P", 2))).toEqual({ prompt: "P", turn: 2 });
+    expect(res.isTurnEnd({ type: "result" })).toBe(true);
+    // The mock speaks the claude-stream dialect for turn ends.
+    expect(HARNESSES.mock.extract).toBe("claude-stream");
   });
 
   test("codex: instructions prepended under the separator; prompt is last", () => {
@@ -1041,20 +1296,8 @@ describe("HARNESSES runners", () => {
     expect(prompt).toEndWith("THE CONTEXT");
   });
 
-  test("pi: --mode json + native append; resume uses --session-id", () => {
-    const fresh = spec("pi", { model: "anthropic/claude-fable-5" });
-    expect(fresh.argv).toEqual([
-      "/bin/fake", "-p", "THE CONTEXT", "--mode", "json",
-      "--model", "anthropic/claude-fable-5",
-      "--append-system-prompt", "THE INSTRUCTIONS",
-    ]);
-    const resumed = spec("pi", { prompt: "WAKE", resume: { harnessSessionId: "pi-sess" } });
-    expect(resumed.argv).toContain("--session-id");
-    expect(resumed.argv).toContain("pi-sess");
-  });
-
   test("opencode: -m is mandatory — unpinned roster entries fail honestly", () => {
-    const r = HARNESSES.opencode.runner(baseCtx); // no model
+    const r = HARNESSES.opencode.runner!(baseCtx); // no model
     expect("error" in r && r.error).toContain("model");
 
     const s = spec("opencode", { model: "opencode/deepseek-v4-flash-free" });
@@ -1063,7 +1306,7 @@ describe("HARNESSES runners", () => {
     expect(s.argv[s.argv.length - 1]).toContain(THREAD_CONTEXT_SEPARATOR);
 
     const resumed = spec("opencode", {
-      model: "m", prompt: "WAKE", resume: { harnessSessionId: "ses_x" },
+      model: "m", prompt: "TURN", resume: { harnessSessionId: "ses_x" },
     });
     expect(resumed.argv).toContain("-s");
     expect(resumed.argv).toContain("ses_x");
@@ -1074,7 +1317,7 @@ describe("HARNESSES runners", () => {
     expect(s.argv).toContain("--force");
     expect(s.argv).toContain("--trust");
     expect(s.argv[s.argv.length - 1]).toContain(THREAD_CONTEXT_SEPARATOR);
-    const resumed = spec("cursor", { prompt: "WAKE", resume: { harnessSessionId: "chat-1" } });
+    const resumed = spec("cursor", { prompt: "TURN", resume: { harnessSessionId: "chat-1" } });
     expect(resumed.argv).toContain("--resume");
     expect(resumed.argv).toContain("chat-1");
   });
@@ -1091,7 +1334,7 @@ describe("HARNESSES runners", () => {
     expect(s.files![0].content).toContain(THREAD_CONTEXT_SEPARATOR);
     expect(s.files![0].content).toEndWith("THE CONTEXT");
 
-    const empty = HARNESSES.devin.runner({ ...baseCtx, prompt: "  " });
+    const empty = HARNESSES.devin.runner!({ ...baseCtx, prompt: "  " });
     expect("error" in empty).toBe(true); // devin panics (exit 101) without a prompt
   });
 
@@ -1112,7 +1355,7 @@ describe("HARNESSES runners", () => {
     // The prompt is NOT prepended — --rules is the native injection.
     expect(s.argv[s.argv.indexOf("-p") + 1]).toBe("THE CONTEXT");
     // No minted id = a host bug, refused loudly.
-    expect("error" in HARNESSES.grok.runner(baseCtx)).toBe(true);
+    expect("error" in HARNESSES.grok.runner!(baseCtx)).toBe(true);
   });
 
   test("session-id strategies: capture predicates match the real stream shapes", () => {
@@ -1241,33 +1484,29 @@ echo "trailing noise"
   });
 });
 
-// ── 8. session timeout ──────────────────────────────────────────────────────
+// ── 8. the per-TURN timeout ─────────────────────────────────────────────────
 
-describe("session timeout", () => {
+describe("per-turn timeout", () => {
   test(
-    "an overtime session is killed with reason 'timeout'",
+    "a stalled turn is killed and failed; the record idles; the next ping succeeds",
     async () => {
-      const host = boot(undefined, { sessionTimeoutMs: 1 });
+      // Tiny per-turn budget. The mock's stall mode ("[stall]" in the PING,
+      // never the history) blocks without settling the turn.
+      const host = boot(undefined, { sessionTimeoutMs: 3_000 });
       const { thread } = await makeThread(host, "Timeout");
-      await req<Post>(host, "POST", "/api/posts", {
-        threadId: thread.id,
-        author: "user",
-        body: "@demo-bot you will be terminated",
-      });
+      await tag(host, thread.id, "@demo-bot do it [stall]");
 
-      const errored = await pollUntil(async () => {
+      const timedOut = await pollUntil(async () => {
         const s = await getState(host);
-        return s.sessions.find(
-          (x) =>
-            x.threadId === thread.id &&
-            x.handle === "demo-bot" &&
-            x.state === "error" &&
-            x.reason === "timeout",
-        );
-      }, "the session to time out");
-      expect(errored.endedAt).toBeDefined();
+        const r = recordsFor(s, thread.id, "demo-bot")[0];
+        return turnsOf(r)[0]?.state === "failed" && r?.state === "idle" ? r : undefined;
+      }, "the stalled turn to time out", 30_000);
+      // Turn timeout → turn failed, record IDLE (not error): the next ping
+      // resurrects.
+      expect(timedOut.reason).toBe("timeout");
+      expect(timedOut.procKey).toBeUndefined(); // the child was killed
 
-      const state = await getState(host);
+      let state = await getState(host);
       expect(
         state.posts.some(
           (p) =>
@@ -1277,8 +1516,31 @@ describe("session timeout", () => {
             p.body.includes("timed out"),
         ),
       ).toBe(true);
+      // session-end(error) — a turn failure IS the only ending.
+      expect(
+        state.events.some(
+          (e) => e.type === "session-end" && e.payload.outcome === "error",
+        ),
+      ).toBe(true);
+
+      // The next ping runs a fresh turn on the SAME record and succeeds.
+      await tag(host, thread.id, "@demo-bot recover");
+      await pollUntil(async () => {
+        const s = await getState(host);
+        return s.posts.some(
+          (p) => p.threadId === thread.id && p.body.startsWith("turn 2 ack:"),
+        )
+          ? true
+          : undefined;
+      }, "the recovery turn to be acked", 30_000);
+      state = await getState(host);
+      const records = recordsFor(state, thread.id, "demo-bot");
+      expect(records).toHaveLength(1);
+      expect(turnsOf(records[0])[1].state).toBe("done");
+      expect(records[0].state).toBe("idle");
+      expect(records[0].reason).toBeUndefined(); // the badge cleared
     },
-    40_000,
+    60_000,
   );
 });
 
@@ -1345,18 +1607,15 @@ describe("GET /api/doctor (v2)", () => {
     expect(doc.harnesses["ghost-harness"].models).toBeNull();
   });
 
-  test("lastFailure surfaces the most recent error session for the harness", async () => {
+  test("lastFailure surfaces the most recent failed turn for the harness", async () => {
     const host = boot();
     const { thread } = await makeThread(host, "Doctor Failure");
     await addGhostToRoster(host);
-    await req<Post>(host, "POST", "/api/posts", {
-      threadId: thread.id,
-      author: "user",
-      body: "@ghost-9 diagnose me",
-    });
+    await tag(host, thread.id, "@ghost-9 diagnose me");
     await pollUntil(async () => {
       const s = await getState(host);
-      return s.sessions.find((x) => x.handle === "ghost-9" && x.state === "error");
+      const r = recordsFor(s, thread.id, "ghost-9")[0];
+      return r?.state === "error" ? r : undefined;
     }, "the ghost failure", 10_000);
 
     const doc = await req<Doctor>(host, "GET", "/api/doctor");
@@ -1447,19 +1706,15 @@ describe("session telemetry", () => {
       });
 
       try {
-        await req<Post>(host, "POST", "/api/posts", {
-          threadId: thread.id,
-          author: "user",
-          body: "@demo-bot narrate for the telemetry channel",
-        });
+        await tag(host, thread.id, "@demo-bot narrate for the telemetry channel");
         const done = await pollUntil(async () => {
           const s = await getState(host);
-          return s.sessions.find(
-            (x) => x.threadId === thread.id && x.handle === "demo-bot" && x.state === "done",
-          );
-        }, "the mock session to finish");
+          const r = recordsFor(s, thread.id, "demo-bot")[0];
+          return r?.state === "idle" && turnsOf(r)[0]?.state === "done" ? r : undefined;
+        }, "the mock turn to finish");
 
-        // The mock's stdout narration line arrived as a session-line frame.
+        // The mock's stdout narration line arrived as a session-line frame,
+        // keyed by the RECORD id.
         const mine = await pollUntil(
           async () =>
             frames.some(
@@ -1481,7 +1736,8 @@ describe("session telemetry", () => {
         // State pushes still flow on the same channel.
         expect(frames.some((f) => f.type === "state")).toBe(true);
 
-        // Completed sessions replay via GET /api/sessions/:id/log.
+        // Session logs replay via GET /api/sessions/:id/log (one per record,
+        // appended across turns).
         const res = await fetch(`${host.url}/api/sessions/${done.id}/log`);
         expect(res.status).toBe(200);
         expect(res.headers.get("content-type")).toContain("text/plain");
@@ -1502,7 +1758,7 @@ describe("session telemetry", () => {
 // ── 10. context rendering ───────────────────────────────────────────────────
 
 describe("renderThreadContext", () => {
-  const fixture: BoardState = {
+  const fixtureState: BoardState = {
     projects: [
       { id: "p1", key: "ENG", name: "Engram", repoPath: "/tmp/engram", color: "#fff", createdAt: 1 },
     ],
@@ -1534,7 +1790,7 @@ describe("renderThreadContext", () => {
   };
 
   test("header, roster table, event one-liners", () => {
-    const out = renderThreadContext(fixture, "t1");
+    const out = renderThreadContext(fixtureState, "t1");
     expect(out).toContain("# ENG-7: Fix the flake");
     expect(out).toContain("Status: in_progress");
     expect(out).toContain("The replay test flakes.");
@@ -1546,7 +1802,7 @@ describe("renderThreadContext", () => {
   });
 
   test("resolved exchange collapses to its ⚑ line", () => {
-    const out = renderThreadContext(fixture, "t1");
+    const out = renderThreadContext(fixtureState, "t1");
     expect(out).toContain(
       "- ⚑ [resolved, 2 replies — run `elan read r1` for the full exchange] " +
         "Root cause found: race in the writer.",
@@ -1555,70 +1811,60 @@ describe("renderThreadContext", () => {
   });
 
   test("unresolved exchange renders fully, replies indented, attachments as paths", () => {
-    const out = renderThreadContext(fixture, "t1");
+    const out = renderThreadContext(fixtureState, "t1");
     expect(out).toContain("**fable-5**: Open question: keep the lock?");
     expect(out).toContain("  **gpt-5.6**: Yes — drop it in v2.");
     expect(out).toContain("(attachment: notes.md)");
   });
 
-  test("## You addresses the tagged handle with worktree + elan verbs", () => {
-    const out = renderThreadContext(fixture, "t1", "fable-5");
+  test("## You addresses the tagged handle; hot-session guidance, no wake verbs", () => {
+    const out = renderThreadContext(fixtureState, "t1", "fable-5");
     expect(out).toContain("## You");
     expect(out).toContain("You are **@fable-5**");
     expect(out).toContain("/tmp/engram/.elan/worktrees/ENG-7");
     expect(out).toContain("`elan post <text>`");
     expect(out).toContain("AGENTS.md");
+    // The hot model replaced wake-me/wait.
+    expect(out).toContain("session stays hot");
+    expect(out).not.toContain("wake-me");
     // Without a handle there is no You section.
-    expect(renderThreadContext(fixture, "t1")).not.toContain("## You");
+    expect(renderThreadContext(fixtureState, "t1")).not.toContain("## You");
   });
 });
 
-// ── 11. wake-on endpoint ────────────────────────────────────────────────────
+// ── 11. wake-on is GONE ─────────────────────────────────────────────────────
 
-describe("POST /api/sessions/:id/wake-on", () => {
-  test("flips the session to waiting with wakeOn set", async () => {
+describe("wake removal", () => {
+  test("POST /api/sessions/:id/wake-on answers 410 with the hot-session message", async () => {
     const host = boot();
-    const { thread } = await makeThread(host, "Wake Endpoint");
-    await addGhostToRoster(host);
-    // Any session record will do — the unknown-harness path mints one fast.
-    await req<Post>(host, "POST", "/api/posts", {
-      threadId: thread.id,
-      author: "user",
-      body: "@ghost-9 ping",
-    });
-    const session = await pollUntil(async () => {
-      const s = await getState(host);
-      return s.sessions.find((x) => x.threadId === thread.id && x.handle === "ghost-9");
-    }, "a session record", 10_000);
-
-    await req(host, "POST", `/api/sessions/${session.id}/wake-on`, {
-      event: "session-end",
-      handle: "fable-5",
-    });
-    const state = await getState(host);
-    const updated = state.sessions.find((x) => x.id === session.id)!;
-    expect(updated.state).toBe("waiting");
-    expect(updated.wakeOn).toEqual({ event: "session-end", handle: "fable-5" });
-    expect(updated.endedAt).toBeDefined(); // arming IS ending
-
-    const missing = await fetch(`${host.url}/api/sessions/nope/wake-on`, {
+    const res = await fetch(`${host.url}/api/sessions/any-id-at-all/wake-on`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ event: "post" }),
     });
-    expect(missing.status).toBe(404);
+    expect(res.status).toBe(410);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe("wake-on is gone: sessions are hot; every ping is a turn");
+  });
 
-    const badEvent = await fetch(`${host.url}/api/sessions/${session.id}/wake-on`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ event: "sunrise" }),
-    });
-    expect(badEvent.status).toBe(400);
+  test("`elan wait`/`elan wake-me` print the hot message and exit 0", () => {
+    for (const verb of ["wait", "wake-me"]) {
+      const r = Bun.spawnSync([process.execPath, CLI_PATH, verb, "--on", "post"], {
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      expect(r.exitCode).toBe(0);
+      expect(r.stdout.toString()).toContain(
+        "Sessions stay hot — end your turn; new pings arrive as new turns.",
+      );
+    }
   });
 });
 
+// ── 12. silent-success fallback (per turn) ──────────────────────────────────
+
 describe("silent-success fallback", () => {
-  test("a session that never used elan gets its final message posted, tags suppressed", async () => {
+  test("a turn that never used elan gets its final message posted, tags suppressed", async () => {
     const prevSilent = process.env.ELAN_MOCK_SILENT;
     const prevExtra = process.env.ELAN_SPAWN_ENV_EXTRA;
     process.env.ELAN_MOCK_SILENT = "1";
@@ -1645,9 +1891,9 @@ describe("silent-success fallback", () => {
 
       const state = await pollUntil(async () => {
         const s = await getState(host);
-        const done = s.sessions.find((x) => x.handle === "quiet-bot" && x.state === "done");
-        return done ? s : undefined;
-      }, 20000);
+        const r = recordsFor(s, thread.id, "quiet-bot")[0];
+        return r?.state === "idle" && turnsOf(r)[0]?.state === "done" ? s : undefined;
+      }, "the silent turn to finish");
 
       const fallback = state.posts.find(
         (p) => p.threadId === thread.id && p.author === "quiet-bot",
@@ -1667,5 +1913,15 @@ describe("silent-success fallback", () => {
       if (prevExtra === undefined) delete process.env.ELAN_SPAWN_ENV_EXTRA;
       else process.env.ELAN_SPAWN_ENV_EXTRA = prevExtra;
     }
+  }, 40_000);
+});
+
+// ── 13. the turn-prompt seam the mock relies on ─────────────────────────────
+
+describe("turn prompts", () => {
+  test("TURN_PING_SEPARATOR is the literal the mock mirrors", () => {
+    // dev/mock-agent.ts hardcodes this to find the ping section of a
+    // full-context prompt (stall detection must not fire on history).
+    expect(TURN_PING_SEPARATOR).toBe("── this turn's ping ──");
   });
 });

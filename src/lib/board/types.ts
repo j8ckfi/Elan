@@ -99,8 +99,9 @@ export type SessionState =
   | "queued"
   | "spawning"
   | "running"
-  | "waiting"
-  | "done"
+  | "idle" // hot: alive (or resumable), no turn in flight — the steady state
+  | "waiting" // legacy (pre-hot wake model); normalized to idle on host boot
+  | "done" // legacy; hot sessions never finish, they idle
   | "error";
 
 export interface AgentSessionRecord {
@@ -115,8 +116,13 @@ export interface AgentSessionRecord {
   /** Armed wake condition while state === "waiting". */
   wakeOn?: { event: "session-end" | "post"; handle?: string };
   /** The tagged/wake event this session answers — durable-intent marker:
-   *  an event is handled iff a session carries its id here. */
+   *  an event is handled iff a session carries its id here (legacy) or in
+   *  `turns`. */
   triggerEventId?: string;
+  /** The hot model's turn queue: one session per (thread, handle), forever;
+   *  every ping becomes a turn. Durable claims: a tagged event is handled
+   *  iff some session's turns[] carries it. */
+  turns?: Array<{ eventId: string; state: "pending" | "done" | "failed"; at: number }>;
   /** Why the session is in its terminal state ("timeout",
    *  "runner-not-found", "orphaned-by-restart", …). */
   reason?: string;

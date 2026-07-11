@@ -16,9 +16,11 @@ const HELP = `elan — act on the Elan board from inside an agent session
   elan status <todo|in-progress|in-review|done|canceled>   move the thread
   elan thread                          print the rendered thread context
   elan read <post-id>                  print the full exchange containing a post
-  elan wake-me --on <@handle-done|post>  end this session; the host resumes it on the event
-  elan wait --on <…>                   alias of wake-me
-  elan help                            this table`;
+  elan help                            this table
+
+Sessions stay hot: when your turn's work is done, just stop — new pings
+(@mentions and replies to your posts) arrive as new messages in this same
+session. (wake-me/wait are retired no-ops.)`;
 
 function die(msg: string, code: number): never {
   console.error(msg);
@@ -75,16 +77,6 @@ async function addPost(extra: Record<string, unknown>, text: string): Promise<vo
   });
   const post = (await res.json()) as Post;
   console.log(`posted ${post.id}`);
-}
-
-function parseWakeOn(args: string[]): { event: "session-end" | "post"; handle?: string } {
-  const onIdx = args.indexOf("--on");
-  const target = onIdx !== -1 ? args[onIdx + 1] : undefined;
-  if (!target) die("usage: elan wake-me --on <@handle-done|post>", 1);
-  if (target === "post") return { event: "post" };
-  const m = target.match(/^@?(.+)-done$/);
-  if (m) return { event: "session-end", handle: m[1] };
-  die(`elan: bad --on target "${target}" — expected @<handle>-done or post`, 1);
 }
 
 const argv = process.argv.slice(2);
@@ -180,13 +172,11 @@ switch (verb) {
 
   case "wake-me":
   case "wait": {
-    const wakeOn = parseWakeOn(rest);
-    await api(
-      "POST",
-      `/api/sessions/${encodeURIComponent(need("ELAN_SESSION"))}/wake-on`,
-      wakeOn,
+    // Retired with the hot-session model (docs/ORCHESTRATION.md "Wake-on-event
+    // — removed"): exit 0 so old agent habits don't error.
+    console.log(
+      "Sessions stay hot — end your turn; new pings arrive as new turns.",
     );
-    console.log("Wake armed; end your session now.");
     break;
   }
 

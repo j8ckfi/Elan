@@ -1,48 +1,74 @@
 // The Elan host: one process that owns BoardState, serves it to UI clients
-// (REST + WS full-state push), and runs the tag→spawn orchestrator — all on
+// (REST + WS full-state push), and runs the HOT-SESSION orchestrator — all on
 // the same createBoardStore rules module the browser store uses, persisted to
 // `${ELAN_STATE_DIR}/board.json` instead of localStorage. Run with:
 //
 //   bun dev/elan-host.ts          # port 4519, state in ./.elan/
 //
 // Config via env: ELAN_HOST_PORT (4519), ELAN_STATE_DIR (./.elan),
-// ELAN_MAX_SESSIONS (4), ELAN_SESSION_TIMEOUT_MS (30 min),
+// ELAN_MAX_SESSIONS (4), ELAN_SESSION_TIMEOUT_MS (per-TURN, 30 min),
 // ELAN_THREAD_BUDGET (opt-in breaker, default uncapped), ELAN_SPAWN_ENV_EXTRA
 // (comma-separated var names forwarded to children). The contract is
-// docs/ORCHESTRATION.md — the "Durability architecture" section especially;
-// tests boot this in-process via startHost() (auto-start only under
+// docs/ORCHESTRATION.md — "Hot sessions" + "Durability architecture"; tests
+// boot this in-process via startHost() (auto-start only under
 // import.meta.main).
 //
-// Durability rules implemented here (docs/ORCHESTRATION.md):
-//   1. Durable intent — work IS session records; a tagged event is handled
-//      iff a session carries its id in triggerEventId. No in-memory set is
-//      ever correctness.
-//   2. A reconciler, not a reactor — one level-triggered loop (every store
-//      mutation + a 2s tick) converges actual toward desired state.
+// THE INVARIANT (docs/ORCHESTRATION.md "Hot sessions", 2026-07-10): at most
+// ONE AgentSessionRecord per (threadId, handle), and at most ONE live child
+// per record, forever. Structurally enforced:
+//   - sessionFor(threadId, handle) is the ONLY place records are minted
+//     (besides the boot migration, which collapses legacy duplicates).
+//   - Every ping (explicit @tag or reply-to-agent implicit tag — the store
+//     emits both as `tagged` events) appends a TURN to the record's turns[].
+//     Durable claims: an event is handled iff some record's turns[] carries
+//     its id (or a legacy triggerEventId equals it).
+//   - Turns run strictly one at a time per record: a per-record drain loop
+//     is the only spawner; the reconciler never spawns directly. A tag
+//     during a running turn just queues the next turn — that IS the fix for
+//     the old wake model's clone bug.
+//   - The wake/end/resume machinery is GONE. `elan wake-me`/`wait` explain
+//     hotness and exit 0; POST /api/sessions/:id/wake-on answers 410.
+//
+// Residency: claude-code (bidirectional --input-format stream-json) and pi
+// (--mode rpc) keep ONE resident child per record; new turns are injected on
+// stdin. Idle resident children are NEVER killed (the per-turn timeout
+// applies to in-flight turns only); if one dies, the next turn resurrects
+// the SAME record via --resume/--session-id. mock is resident too (line-in,
+// ack-out — zero credentials). cursor/grok/opencode run serialized one-shot
+// turns on the SAME harness conversation; codex/devin/pool run each turn
+// fresh with full context.
+//
+// Durability rules kept from the pre-hot host (docs/ORCHESTRATION.md):
 //   3. The stream is the signal — per-harness outcome extractors over the
 //      captured stdout JSONL lead every failure post; the ANSI-stripped
-//      stderr tail is secondary. Full transcript → .elan/sessions/<id>.log.
+//      stderr tail is secondary. One log per RECORD, appended across turns:
+//      .elan/sessions/<record-id>.log.
 //   4. Environment is built, not inherited — login-shell probe, strip-list,
 //      shim-first PATH with static fallbacks, TERM=dumb, our ELAN_*.
-//   5. Limits — ELAN_MAX_SESSIONS concurrent, opt-in per-thread budget,
-//      ELAN_SESSION_TIMEOUT_MS with SIGTERM → 10s → SIGKILL.
+//   5. Limits — ELAN_MAX_SESSIONS concurrent children, opt-in per-thread
+//      turn budget, per-turn ELAN_SESSION_TIMEOUT_MS with SIGTERM → 10s →
+//      SIGKILL (fails the turn; the record goes idle and the next ping
+//      resurrects).
 //   6. Preflight before spawn — runner binary resolved on the CHILD's PATH;
 //      GET /api/doctor (v2) reports per-harness bin/found/path/version/auth/
 //      models/discoveryError/lastFailure — model discovery runs lazily off
 //      doctor with per-probe 15s timeouts, cached until restart (?refresh=1).
 //   7. Runner correctness — one declarative HARNESSES registry row per CLI
 //      (claude-code, codex, pi, opencode, cursor, devin, pool, grok, mock):
-//      argv shape, instructions injection (native append flag vs prepended
-//      under a "── thread context ──" separator), session-id strategy
-//      (capture/mint/none), model discovery, auth probe, outcome extractor.
-//      An instantly-dying resume falls back once to a fresh spawn.
+//      argv shape, residency wiring, instructions injection, session-id
+//      strategy (capture/mint/none), model discovery, auth probe, outcome
+//      extractor. An instantly-dying resume falls back once to a fresh
+//      start with full context (reason "resume-fell-back").
 //
-// Telemetry: every captured stdout/stderr line of a live session ALSO goes
+// Events: session-start once per record (first spawn); session-end ONLY on a
+// failed turn (outcome error) — idling is not an ending.
+//
+// Telemetry: every captured stdout/stderr line of a live child ALSO goes
 // out on the main WS channel as {type:"session-line", sessionId, stream,
-// line}; completed sessions replay via GET /api/sessions/:id/log.
+// line}, appended across turns; logs replay via GET /api/sessions/:id/log.
 // Roster mutation: PUT /api/roster {roster} → store.setRoster.
 
-import type { ServerWebSocket, Subprocess } from "bun";
+import type { FileSink, ServerWebSocket, Subprocess } from "bun";
 import { spawnSync } from "node:child_process";
 import {
   accessSync,
@@ -101,9 +127,13 @@ const EVENT_TYPES = new Set<string>([
 // (The harness registry — HARNESSES — lives below, after the extractors and
 // discovery parsers it references.)
 
-/** Session records minted only to absorb a tagged event (never a spawn
- *  attempt) — excluded from the per-thread start budget. */
-const NON_START_REASONS = new Set([
+/** One entry of AgentSessionRecord.turns — the hot model's unit of work. */
+export type Turn = NonNullable<AgentSessionRecord["turns"]>[number];
+
+/** Legacy claim-bookkeeping records (never a spawn attempt). The boot
+ *  migration drops them entirely, folding their triggerEventIds into the
+ *  surviving record's turns as done so nothing respawns. */
+export const MARKER_REASONS = new Set([
   "budget-exceeded", "stale-skipped", "absorbed-by-live-session", "unknown-handle",
   "superseded-by-wake",
 ]);
@@ -111,6 +141,132 @@ const NON_START_REASONS = new Set([
 function intEnv(v: string | undefined, fallback: number): number {
   const n = Number(v);
   return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
+// ── Boot migration: collapse legacy sessions to ONE per (thread, handle) ────
+// Legacy state files hold many records per (thread, handle) — the wake model
+// minted one per tag plus marker records (the user's real board reached ~200
+// records for one grok handle). Each group merges to ONE record:
+//   - survivor: the newest record with a harnessSessionId, else the newest
+//     non-marker record, else the newest of the group;
+//   - every triggerEventId in the group becomes a done turn on the survivor
+//     (nothing ever respawns for an already-claimed event); other records'
+//     turns[] are absorbed as done; markers are dropped entirely;
+//   - states normalize: waiting/done → idle; spawning/running (orphans — no
+//     child can survive a host restart) → idle with the FIRST pending turn
+//     failed and reason "orphaned-by-restart" (logged, NOT an error: the
+//     next ping simply runs a turn); queued with nothing pending → idle;
+//   - wakeOn and triggerEventId are stripped (turns[] carries the claims);
+//     logPath is kept (survivor's, else the newest one in the group).
+// Pure over BoardState so tests hit it directly; runs on every boot (a
+// single modern record passes through untouched apart from orphan cleanup).
+export function migrateSessions(
+  state: BoardState,
+  now: number = Date.now(),
+): { state: BoardState; changed: boolean; notes: string[] } {
+  const notes: string[] = [];
+  let changed = false;
+
+  const groups = new Map<string, AgentSessionRecord[]>();
+  for (const s of state.sessions) {
+    const k = `${s.threadId} ${s.handle}`;
+    const list = groups.get(k);
+    if (list) list.push(s);
+    else groups.set(k, [s]);
+  }
+
+  const newest = (list: AgentSessionRecord[]): AgentSessionRecord =>
+    list.reduce((a, b) => ((b.startedAt ?? 0) >= (a.startedAt ?? 0) ? b : a));
+  const isMarker = (s: AgentSessionRecord): boolean =>
+    s.reason != null && MARKER_REASONS.has(s.reason);
+
+  const out: AgentSessionRecord[] = [];
+  for (const group of groups.values()) {
+    const real = group.filter((s) => !isMarker(s));
+    const withSid = real.filter((s) => s.harnessSessionId);
+    const base =
+      withSid.length > 0 ? newest(withSid) : real.length > 0 ? newest(real) : newest(group);
+
+    // Absorb claims: the survivor's own turns keep their state; everything
+    // else in the group (turns and legacy triggerEventIds) folds in as done.
+    const turnMap = new Map<string, Turn>();
+    for (const t of base.turns ?? []) turnMap.set(t.eventId, { ...t });
+    for (const s of group) {
+      if (s !== base)
+        for (const t of s.turns ?? [])
+          if (!turnMap.has(t.eventId))
+            turnMap.set(t.eventId, { eventId: t.eventId, state: "done", at: t.at });
+      if (s.triggerEventId && !turnMap.has(s.triggerEventId))
+        turnMap.set(s.triggerEventId, {
+          eventId: s.triggerEventId,
+          state: "done",
+          at: s.endedAt ?? s.startedAt ?? now,
+        });
+    }
+    let turns = [...turnMap.values()].sort((a, b) => a.at - b.at);
+
+    let st = base.state;
+    let reason = base.reason;
+    if (st === "spawning" || st === "running") {
+      // Orphaned by a restart: the in-flight turn (the FIRST pending one)
+      // did not finish; queued-behind turns stay pending and run at boot.
+      const idx = turns.findIndex((t) => t.state === "pending");
+      if (idx !== -1)
+        turns = turns.map((t, i) => (i === idx ? { ...t, state: "failed" as const } : t));
+      st = "idle";
+      reason = "orphaned-by-restart";
+      notes.push(
+        `@${base.handle} in thread ${base.threadId} was ${base.state} at shutdown — ` +
+          `idle now (orphaned-by-restart); the next ping runs a turn`,
+      );
+    } else if (st === "waiting" || st === "done") {
+      st = "idle";
+    } else if (st === "queued" && !turns.some((t) => t.state === "pending")) {
+      st = "idle"; // legacy queued record whose claim was folded to done
+    }
+    if (isMarker(base)) {
+      // A group that was ONLY markers: keep one record so the claims stay
+      // durable, but it is idle bookkeeping, not an error.
+      st = turns.some((t) => t.state === "pending") ? "queued" : "idle";
+    }
+
+    const logPath =
+      base.logPath ??
+      group.filter((s) => s.logPath).sort((a, b) => (b.startedAt ?? 0) - (a.startedAt ?? 0))[0]
+        ?.logPath;
+
+    const survivor: AgentSessionRecord = {
+      ...base,
+      state: st,
+      reason,
+      turns,
+      logPath,
+      wakeOn: undefined,
+      triggerEventId: undefined,
+      procKey: undefined,
+    };
+
+    if (group.length > 1) {
+      changed = true;
+      notes.push(
+        `merged ${group.length} session records for (@${base.handle}, thread ` +
+          `${base.threadId}) → ${survivor.id} (${turns.length} claimed turns` +
+          `${survivor.harnessSessionId ? `, harness session ${survivor.harnessSessionId}` : ""})`,
+      );
+    } else if (
+      survivor.state !== base.state ||
+      survivor.reason !== base.reason ||
+      base.wakeOn !== undefined ||
+      base.triggerEventId !== undefined ||
+      base.procKey !== undefined ||
+      (base.turns?.length ?? 0) !== turns.length
+    ) {
+      changed = true;
+    }
+    out.push(survivor);
+  }
+
+  return { state: { ...state, sessions: out }, changed, notes };
 }
 
 // ── ANSI stripping + per-harness outcome extraction ─────────────────────────
@@ -863,13 +1019,41 @@ export type AuthProbe =
    *  CLI answers the initialize control_request differently / exits 1). */
   | { kind: "discovery" };
 
+/** What a resident harness needs at spawn time. NO prompt: turns are
+ *  injected on stdin, never argv. */
+export interface ResidencyCtx {
+  binPath: string;
+  /** Elan standing instructions (how to drive the `elan` CLI). */
+  instructions: string;
+  /** Roster-pinned model, if any. */
+  model?: string;
+  /** Harness-native session id when this start resurrects a dead resident
+   *  child (--resume / --session-id continuity — same record, new child). */
+  resume?: string;
+}
+
+/** Bidirectional residency: ONE live child per record; each turn is one
+ *  stdin line; completion is a recognizable stdout event. */
+export interface Residency {
+  argv(ctx: ResidencyCtx): string[];
+  /** Encode a turn prompt as one stdin line (newline appended by the host).
+   *  `turnNo` is the 1-based position of the turn on the record. */
+  encodeTurn(prompt: string, turnNo: number): string;
+  /** Does this parsed stdout line settle the in-flight turn? */
+  isTurnEnd(msg: Record<string, unknown>): boolean;
+}
+
 export interface HarnessProfile {
   /** The roster's `harness` value. */
   id: string;
   displayName: string;
   /** Executable resolved on the CHILD PATH (preflight + doctor). */
   bin: string;
-  runner(ctx: RunnerCtx): RunnerSpec | { error: string };
+  /** One-shot spawn per turn (serialized harnesses). Exactly one of
+   *  runner/residency is set. */
+  runner?(ctx: RunnerCtx): RunnerSpec | { error: string };
+  /** Resident child wiring (claude-code, pi, mock). */
+  residency?: Residency;
   /** How the harness-native session id (for resume) is learned: captured
    *  from the stdout stream, minted by the host (grok's create-or-resume
    *  `-s`), or not at all (no resume support). */
@@ -883,6 +1067,10 @@ export interface HarnessProfile {
 }
 
 export const THREAD_CONTEXT_SEPARATOR = "── thread context ──";
+
+/** Separates the rendered context from the triggering ping in a full-context
+ *  turn prompt. dev/mock-agent.ts mirrors this literal to find the ping. */
+export const TURN_PING_SEPARATOR = "── this turn's ping ──";
 
 /** Harnesses without a native system-prompt/append flag get the standing
  *  instructions PREPENDED to the prompt under a separator. */
@@ -900,32 +1088,31 @@ export const HARNESSES: Record<string, HarnessProfile> = {
     bin: "claude",
     extract: "claude-stream",
     sessionId: { mode: "capture", capture: captureSessionIdField },
-    runner(ctx) {
-      if (ctx.resume) {
-        // Resume drops the full context: the harness session has it; only
-        // the wake trigger rides the prompt.
-        return {
-          argv: [
-            ctx.binPath, "-p", ctx.prompt, "--output-format", "stream-json",
-            "--verbose", "--resume", ctx.resume.harnessSessionId,
-            // Non-interactive -p auto-denies tool permissions, which would
-            // make the elan CLI unreachable. Autonomy in an isolated
-            // worktree is the product premise; the board is the oversight.
-            "--permission-mode", "bypassPermissions",
-            ...(ctx.model ? ["--model", ctx.model] : []),
-          ],
-        };
-      }
-      return {
-        argv: [
-          ctx.binPath, "-p", ctx.prompt, "--output-format", "stream-json",
-          // stream-json in -p mode refuses to run without --verbose.
-          "--verbose",
-          "--permission-mode", "bypassPermissions",
-          ...(ctx.model ? ["--model", ctx.model] : []),
-          "--append-system-prompt", ctx.instructions,
-        ],
-      };
+    // Resident: ONE bidirectional child per record. Turns ride stdin as
+    // {type:"user"} messages (the exact wire shape of the desktop adapter,
+    // src/lib/adapters/claude-code/index.ts); the stream's `result` event
+    // settles each turn; the init event's session_id is the resurrection
+    // handle (--resume on the REPLACEMENT resident child).
+    residency: {
+      argv: (ctx) => [
+        ctx.binPath, "-p",
+        "--input-format", "stream-json", "--output-format", "stream-json",
+        // stream-json in -p mode refuses to run without --verbose.
+        "--verbose",
+        // Non-interactive -p auto-denies tool permissions, which would make
+        // the elan CLI unreachable. Autonomy in an isolated worktree is the
+        // product premise; the board is the oversight.
+        "--permission-mode", "bypassPermissions",
+        "--append-system-prompt", ctx.instructions,
+        ...(ctx.model ? ["--model", ctx.model] : []),
+        ...(ctx.resume ? ["--resume", ctx.resume] : []),
+      ],
+      encodeTurn: (prompt) =>
+        JSON.stringify({
+          type: "user",
+          message: { role: "user", content: [{ type: "text", text: prompt }] },
+        }),
+      isTurnEnd: (msg) => msg.type === "result",
     },
     modelDiscovery: {
       kind: "interactive",
@@ -1004,23 +1191,21 @@ export const HARNESSES: Record<string, HarnessProfile> = {
       capture: (msg) =>
         msg.type === "session" && typeof msg.id === "string" && msg.id ? msg.id : undefined,
     },
-    runner(ctx) {
-      if (ctx.resume) {
-        return {
-          argv: [
-            ctx.binPath, "-p", ctx.prompt, "--mode", "json",
-            "--session-id", ctx.resume.harnessSessionId,
-            ...(ctx.model ? ["--model", ctx.model] : []),
-          ],
-        };
-      }
-      return {
-        argv: [
-          ctx.binPath, "-p", ctx.prompt, "--mode", "json",
-          ...(ctx.model ? ["--model", ctx.model] : []),
-          "--append-system-prompt", ctx.instructions,
-        ],
-      };
+    // Resident over `pi --mode rpc`: turns are {type:"prompt"} commands per
+    // src/lib/adapters/pi/protocol.ts; the run settles on agent_end (or the
+    // prompt command's RpcResponse). Resurrection via --session-id.
+    residency: {
+      argv: (ctx) => [
+        ctx.binPath, "--mode", "rpc",
+        ...(ctx.model ? ["--model", ctx.model] : []),
+        "--append-system-prompt", ctx.instructions,
+        ...(ctx.resume ? ["--session-id", ctx.resume] : []),
+      ],
+      encodeTurn: (prompt, turnNo) =>
+        JSON.stringify({ id: `elan-turn-${turnNo}`, type: "prompt", message: prompt }),
+      isTurnEnd: (msg) =>
+        msg.type === "agent_end" ||
+        (msg.type === "response" && msg.command === "prompt"),
     },
     // Offline, <1s, ~301 models on this machine.
     modelDiscovery: {
@@ -1259,14 +1444,15 @@ export const HARNESSES: Record<string, HarnessProfile> = {
     id: "mock",
     displayName: "Mock (demo-bot)",
     bin: "bun",
-    extract: "raw",
+    // The resident mock speaks the claude-stream dialect for turn ends: one
+    // {"type":"result",…} line per turn, so extraction and settling share
+    // the claude path. Zero credentials — the residency test harness.
+    extract: "claude-stream",
     sessionId: null,
-    runner(ctx) {
-      const env: Record<string, string> = { ELAN_CONTEXT: ctx.prompt };
-      // Deliberate forward: the wake test flips the mock's mode via the
-      // host process env, which the built child env would otherwise drop.
-      if (process.env.ELAN_MOCK_WAKE) env.ELAN_MOCK_WAKE = process.env.ELAN_MOCK_WAKE;
-      return { argv: [ctx.binPath, MOCK_AGENT_PATH], env };
+    residency: {
+      argv: (ctx) => [ctx.binPath, MOCK_AGENT_PATH],
+      encodeTurn: (prompt, turnNo) => JSON.stringify({ prompt, turn: turnNo }),
+      isTurnEnd: (msg) => msg.type === "result",
     },
     modelDiscovery: null,
     authProbe: null,
@@ -1286,8 +1472,10 @@ const VERB_TABLE = `| verb | usage |
 | status | \`elan status <todo/in-progress/in-review/done/canceled>\` — move the thread |
 | thread | \`elan thread\` — reprint this context, refreshed |
 | read | \`elan read <post-id>\` — print the full exchange behind a ⚑ line |
-| wake-me | \`elan wake-me --on <@handle-done/post>\` — end this session now, resume on the event |
-| wait | \`elan wait --on <…>\` — alias of wake-me |`;
+
+Your session stays hot: when your turn's work is done, just stop — every new
+ping (an @mention or a reply to your posts) arrives as a new message in this
+same session. There is nothing to wait on and no session to end.`;
 
 function eventLine(e: BoardEvent): string {
   const p = e.payload;
@@ -1396,14 +1584,16 @@ export function renderThreadContext(
   return out.join("\n").trimEnd() + "\n";
 }
 
-/** The one-liner injected as claude-code's --append-system-prompt. */
+/** The one-liner injected natively (claude-code/pi --append-system-prompt,
+ *  grok --rules) or prepended for the rest. */
 function shortInstructions(handle: string): string {
   return (
     `You are @${handle} on an Elan board thread. Act on the board ONLY via the ` +
-    "`elan` CLI on your PATH (elan post/reply/resolve/attach/status/thread/read/" +
-    "wake-me — run `elan help`). The repo's own policy files (AGENTS.md etc.) " +
-    "govern process. When done, move the thread status and mention whoever " +
-    "policy says acts next."
+    "`elan` CLI on your PATH (elan post/reply/resolve/attach/status/thread/read " +
+    "— run `elan help`). The repo's own policy files (AGENTS.md etc.) govern " +
+    "process. When your turn's work is done, move the thread status, mention " +
+    "whoever policy says acts next, and stop — your session stays hot, and new " +
+    "pings arrive as new messages."
   );
 }
 
@@ -1437,23 +1627,42 @@ export interface ElanHost {
   stop(): void;
 }
 
+/** The in-flight turn on one child — the per-TURN timeout applies to this
+ *  and only this (idle resident children are exempt). */
+interface TurnFlight {
+  eventId: string;
+  startedAt: number;
+  /** Stdout lines seen while THIS turn was in flight (outcome extraction). */
+  lines: string[];
+  /** First settle wins: either the residency's turn-end line, or the child
+   *  exiting (serialized turns always settle by exit). */
+  settle(result: { kind: "turn-end" } | { kind: "exit"; code: number }): void;
+  settled: boolean;
+  timedOut?: boolean;
+  killedAt?: number;
+}
+
 /** In-memory bookkeeping for one live child — a cache around the process
- *  handle, never correctness (the session record is). */
+ *  handle, never correctness (the session record is). Keyed by RECORD id:
+ *  one live child per record, structurally. */
 interface ChildInfo {
-  proc: Subprocess<"ignore", "pipe", "pipe">;
+  proc: Subprocess<"pipe" | "ignore", "pipe", "pipe">;
+  /** The resident child's stdin sink (turns ride it as ndjson lines). */
+  stdin?: FileSink;
+  recordId: string;
   threadId: string;
   handle: string;
   harness: string;
   /** Which outcome extractor folds this child's stdout (from the registry). */
   extract: ExtractorKind;
+  /** A resident child outlives its turns; a serialized child IS one turn. */
+  resident: boolean;
   isResume: boolean;
   spawnedAt: number;
-  stdoutLines: string[];
   jsonEvents: number;
   stderrRaw: string;
   logPath: string;
-  timedOut: boolean;
-  killedAt?: number;
+  turn?: TurnFlight;
 }
 
 export function startHost(opts: StartHostOptions = {}): ElanHost {
@@ -1486,6 +1695,12 @@ export function startHost(opts: StartHostOptions = {}): ElanHost {
   } catch {
     initial = emptyState(); // absent or corrupt → empty, never demo
   }
+  // Boot migration: collapse legacy sessions to ONE per (thread, handle) and
+  // normalize legacy states — see migrateSessions above. Runs before the
+  // store exists, so nothing can observe the duplicates.
+  const migration = migrateSessions(initial);
+  initial = migration.state;
+  for (const note of migration.notes) say(`[host] migrate: ${note}`);
   let persistTimer: ReturnType<typeof setTimeout> | null = null;
   let dirty: BoardState | null = null;
   function flush(): void {
@@ -1509,6 +1724,12 @@ export function startHost(opts: StartHostOptions = {}): ElanHost {
       }, PERSIST_DEBOUNCE_MS);
     },
   });
+  if (migration.changed) {
+    // The collapse must land on disk NOW — a crash before the first mutation
+    // would otherwise re-run against the duplicated legacy file forever.
+    dirty = store.getState();
+    flush();
+  }
 
   // ── the elan shim: `elan` on every child session's PATH ────────────────────
   // Absolute bun path — the built child env's PATH may not include wherever
@@ -1915,28 +2136,9 @@ export function startHost(opts: StartHostOptions = {}): ElanHost {
 
     const wakeMatch = path.match(/^\/api\/sessions\/([^/]+)\/wake-on$/);
     if (req.method === "POST" && wakeMatch) {
-      const id = decodeURIComponent(wakeMatch[1]);
-      const session = store.getState().sessions.find((s) => s.id === id);
-      if (!session) return errRes("unknown session", 404);
-      const b = await readBody(req);
-      const event = b?.event;
-      if (event !== "session-end" && event !== "post")
-        return errRes('expected {event: "session-end" | "post", handle?}', 400);
-      if (event === "session-end" && typeof b?.handle !== "string")
-        return errRes('{event: "session-end"} needs a handle', 400);
-      const wakeOn: AgentSessionRecord["wakeOn"] =
-        event === "post"
-          ? { event: "post" }
-          : { event: "session-end", handle: b!.handle as string };
-      // Arming the wake IS the session ending (docs/ORCHESTRATION.md) —
-      // endedAt is the arm time, so only triggers AFTER it can ever wake it.
-      store.upsertSession({
-        ...session,
-        state: "waiting",
-        wakeOn,
-        endedAt: session.endedAt ?? Date.now(),
-      });
-      return json({ ok: true });
+      // Retired with the hot-session model (docs/ORCHESTRATION.md
+      // "Wake-on-event — removed"): nothing wakes because nothing ends.
+      return errRes("wake-on is gone: sessions are hot; every ping is a turn", 410);
     }
 
     return errRes("not found", 404);
@@ -2073,62 +2275,157 @@ export function startHost(opts: StartHostOptions = {}): ElanHost {
     return wtPath;
   }
 
-  // ── session bookkeeping helpers ────────────────────────────────────────────
+  // ── session-record bookkeeping (THE invariant lives here) ──────────────────
   const nowMs = () => Date.now();
 
-  function emitSessionEnd(
-    s: AgentSessionRecord,
-    outcome: "done" | "error" | "waiting",
-  ): void {
+  /** Find-or-create THE record for (threadId, handle). This is the only
+   *  place records are minted (besides the boot migration) — no other code
+   *  path may upsert a NEW session record for a pair that has one. */
+  function sessionFor(threadId: string, handle: string): AgentSessionRecord {
+    const existing = store
+      .getState()
+      .sessions.find((s) => s.threadId === threadId && s.handle === handle);
+    if (existing) return existing;
+    const record: AgentSessionRecord = {
+      id: crypto.randomUUID(),
+      threadId,
+      handle,
+      state: "queued",
+      turns: [],
+      queuedAt: nowMs(),
+      startedAt: nowMs(),
+    };
+    store.upsertSession(record);
+    return record;
+  }
+
+  const currentRecord = (id: string): AgentSessionRecord | undefined =>
+    store.getState().sessions.find((s) => s.id === id);
+
+  function patchRecord(
+    id: string,
+    patch: Partial<AgentSessionRecord>,
+  ): AgentSessionRecord | undefined {
+    const cur = currentRecord(id);
+    if (!cur) return undefined;
+    const next = { ...cur, ...patch };
+    store.upsertSession(next);
+    return next;
+  }
+
+  /** Append a turn — the durable claim for its tagged event. */
+  function appendTurn(recordId: string, turn: Turn): void {
+    const cur = currentRecord(recordId);
+    if (!cur) return;
+    store.upsertSession({ ...cur, turns: [...(cur.turns ?? []), turn] });
+  }
+
+  function setTurnState(recordId: string, eventId: string, state: Turn["state"]): void {
+    const cur = currentRecord(recordId);
+    if (!cur) return;
+    store.upsertSession({
+      ...cur,
+      turns: (cur.turns ?? []).map((t) =>
+        t.eventId === eventId ? { ...t, state } : t,
+      ),
+    });
+  }
+
+  /** session-end fires ONLY on turn failure — idling is not an ending. */
+  function emitSessionEnd(s: AgentSessionRecord): void {
     store.addEvent({
       threadId: s.threadId,
       actor: s.handle,
       type: "session-end",
-      payload: { sessionId: s.id, handle: s.handle, outcome },
+      payload: { sessionId: s.id, handle: s.handle, outcome: "error" },
     });
   }
 
-  /** Terminal error transition + session-end event + (optionally) the ⚠︎ post. */
-  function failSession(
+  /** session-start fires once per RECORD, at its first spawn ever. */
+  function maybeEmitSessionStart(record: AgentSessionRecord): void {
+    const seen = store
+      .getState()
+      .events.some(
+        (e) => e.type === "session-start" && e.payload.sessionId === record.id,
+      );
+    if (seen) return;
+    patchRecord(record.id, { startedAt: nowMs() });
+    store.addEvent({
+      threadId: record.threadId,
+      actor: record.handle,
+      type: "session-start",
+      payload: { sessionId: record.id, handle: record.handle },
+    });
+  }
+
+  /** Fail a turn: mark it failed, badge the record, emit session-end(error),
+   *  file the extractor-led ⚠︎ post. The badge NEVER gates the loop — the
+   *  next ping still runs (a timeout leaves the record idle outright). */
+  function failTurn(
     record: AgentSessionRecord,
+    turn: Turn,
     reason: string,
     postBody: string | undefined,
     extra: Partial<AgentSessionRecord> = {},
   ): void {
-    store.upsertSession({
-      ...record,
-      ...extra,
-      state: "error",
+    setTurnState(record.id, turn.eventId, "failed");
+    patchRecord(record.id, {
+      state: reason === "timeout" ? "idle" : "error",
       reason,
-      procKey: undefined,
       endedAt: nowMs(),
+      ...extra,
     });
-    emitSessionEnd(record, "error");
+    emitSessionEnd(record);
     if (postBody)
-      store.addPost({ threadId: record.threadId, author: record.handle, body: postBody });
-    console.error(`[host] @${record.handle} session error (${reason})`);
+      store.addPost({
+        threadId: record.threadId,
+        author: record.handle,
+        body: postBody,
+        // Host-authored text (which may embed extractor/stderr output) must
+        // never summon anyone.
+        suppressTags: true,
+      });
+    console.error(`[host] @${record.handle} turn failed (${reason})`);
   }
 
-  /** Durable claim marker for a tagged event that must never spawn — the
-   *  record IS the claim, so the event is never re-examined. */
-  function mintClaimMarker(
-    ev: BoardEvent,
-    handle: string,
-    state: "done" | "error",
-    reason: string,
-  ): AgentSessionRecord {
-    const record: AgentSessionRecord = {
-      id: crypto.randomUUID(),
-      threadId: ev.threadId,
-      handle,
-      state,
-      reason,
-      triggerEventId: ev.id,
-      startedAt: nowMs(),
-      endedAt: nowMs(),
-    };
-    store.upsertSession(record);
-    return record;
+  /** Complete a turn: done + idle (the error badge clears). Silent-success
+   *  fallback per turn: a turn that spoke only in its stream gets its final
+   *  message posted on its behalf, mentions suppressed. */
+  function completeTurn(
+    record: AgentSessionRecord,
+    turn: Turn,
+    streamText: string | undefined,
+    turnStartedAt: number,
+    extra: Partial<AgentSessionRecord> = {},
+  ): void {
+    setTurnState(record.id, turn.eventId, "done");
+    patchRecord(record.id, { state: "idle", reason: undefined, ...extra });
+    const st = store.getState();
+    const spoke =
+      st.posts.some(
+        (p) =>
+          p.threadId === record.threadId &&
+          p.author === record.handle &&
+          p.createdAt >= turnStartedAt,
+      ) ||
+      st.events.some(
+        (e) =>
+          e.threadId === record.threadId &&
+          e.actor === record.handle &&
+          e.at >= turnStartedAt &&
+          e.type !== "session-start" &&
+          e.type !== "session-end",
+      );
+    if (!spoke && streamText?.trim()) {
+      store.addPost({
+        threadId: record.threadId,
+        author: record.handle,
+        body: streamText.trim(),
+        suppressTags: true, // a ventriloquized post must never summon anyone
+      });
+      say(`[host] @${record.handle} never used elan this turn — posted its final message`);
+    }
+    say(`[host] @${record.handle} turn done`);
   }
 
   // ── transcript log ─────────────────────────────────────────────────────────
@@ -2140,222 +2437,142 @@ export function startHost(opts: StartHostOptions = {}): ElanHost {
     }
   }
 
-  // ── the reconciler (rules 1, 2, 5, 6) ─────────────────────────────────────
+  // ── the reconciler + the per-record turn loop ("Hot sessions") ─────────────
   // One level-triggered loop: every store mutation and a 2s tick both just
-  // schedule a pass; each pass derives ALL pending work from state.
+  // schedule a pass. A pass (a) claims every unhandled tagged event as a
+  // turn, (b) enforces the per-TURN timeout, (c) kicks the per-record drain
+  // loops. The reconciler NEVER spawns directly — the drain loop is the only
+  // spawner, and at most one loop runs per record at a time, so two children
+  // for one (thread, handle) is impossible by construction.
 
-  /** Wake/trigger prompt, rebuilt from state at spawn time (durable: nothing
-   *  about a pending wake lives only in memory). triggerEventId may name a
-   *  BoardEvent (tag, session-end) or a Post (post-wake). */
-  function triggerDescription(s: AgentSessionRecord, state: BoardState): string {
-    const ev = state.events.find((e) => e.id === s.triggerEventId);
-    if (ev?.type === "tagged") {
-      const post = state.posts.find(
-        (p) => p.threadId === ev.threadId && p.author === ev.actor && p.createdAt === ev.at,
-      );
-      return `tagged by ${ev.actor}${post ? `: ${post.body}` : ""}`;
-    }
-    if (ev?.type === "session-end") {
-      const handle = String(ev.payload.handle ?? "");
-      const last = state.posts
-        .filter((p) => p.threadId === s.threadId && p.author === handle)
-        .sort((a, b) => b.createdAt - a.createdAt)[0];
-      return `@${handle} finished in this thread${last ? ` — their last post: ${last.body}` : ""}`;
-    }
-    const post = state.posts.find((p) => p.id === s.triggerEventId);
-    if (post) return `new post by ${post.author}: ${post.body}`;
-    return "woken by a board event";
+  /** The triggering post, verbatim — what a turn prompt leads with. */
+  function describeTrigger(ev: BoardEvent, state: BoardState): string {
+    const post = state.posts.find(
+      (p) => p.threadId === ev.threadId && p.author === ev.actor && p.createdAt === ev.at,
+    );
+    return `Pinged by ${ev.actor}${post ? `: ${post.body}` : ""}`;
   }
 
-  /** A wake re-points a session's triggerEventId at the waking event; the
-   *  ORIGINAL trigger must stay claimed or it would be re-examined (worst
-   *  case: a duplicate spawn). A terminal marker record retires it. */
-  function retireTrigger(s: AgentSessionRecord, now: number): void {
-    const old = s.triggerEventId;
-    if (!old) return;
-    const claimedElsewhere = store
-      .getState()
-      .sessions.some((x) => x.id !== s.id && x.triggerEventId === old);
-    if (claimedElsewhere) return;
-    store.upsertSession({
-      id: crypto.randomUUID(),
-      threadId: s.threadId,
-      handle: s.handle,
-      state: "done",
-      reason: "superseded-by-wake",
-      triggerEventId: old,
-      startedAt: now,
-      endedAt: now,
+  /** First turn (or any fresh conversation): the full rendered thread with
+   *  the triggering ping highlighted. Later turns: the ping verbatim plus
+   *  one pointer line — the harness conversation already has the context. */
+  function buildTurnPrompt(
+    state: BoardState,
+    record: AgentSessionRecord,
+    turn: Turn,
+    full: boolean,
+  ): string {
+    const ev = state.events.find((e) => e.id === turn.eventId);
+    const trigger = ev ? describeTrigger(ev, state) : "Pinged on this thread.";
+    if (!full) return `${trigger}\n(run \`elan thread\` for current context)`;
+    const context = renderThreadContext(state, record.threadId, record.handle);
+    return `${context}\n${TURN_PING_SEPARATOR}\n\n${trigger}\n`;
+  }
+
+  /** Turn claims in this thread inside the rolling budget window. Budget
+   *  drops themselves are excluded via an in-memory cache — after a restart
+   *  the breaker is briefly conservative, never wrong. */
+  const budgetDropped = new Set<string>();
+  function threadTurnCount(threadId: string, now: number): number {
+    let n = 0;
+    for (const s of store.getState().sessions) {
+      if (s.threadId !== threadId) continue;
+      for (const t of s.turns ?? [])
+        if (t.at > now - BUDGET_WINDOW_MS && !budgetDropped.has(t.eventId)) n++;
+    }
+    return n;
+  }
+
+  /** Quiet claims (stale/budget) can leave a fresh record with nothing
+   *  pending — settle it to idle so nothing dangles in "queued". */
+  function settleIfNothingPending(recordId: string): void {
+    const cur = currentRecord(recordId);
+    if (!cur) return;
+    if (cur.state === "queued" && !(cur.turns ?? []).some((t) => t.state === "pending"))
+      patchRecord(recordId, { state: "idle" });
+  }
+
+  function budgetDrop(ev: BoardEvent, record: AgentSessionRecord): void {
+    // The mention-loop breaker (rule 5): the failed turn keeps the tag from
+    // ever being re-examined; the post tells the humans why nothing ran.
+    budgetDropped.add(ev.id);
+    appendTurn(record.id, { eventId: ev.id, state: "failed", at: nowMs() });
+    settleIfNothingPending(record.id);
+    store.addPost({
+      threadId: ev.threadId,
+      author: record.handle,
+      body:
+        `⚠︎ turn budget exceeded (agent mention loop?) — dropped this @${record.handle} ping. ` +
+        `Limit: ${threadBudget} turns per ${Math.round(BUDGET_WINDOW_MS / 60_000)} min per thread.`,
+      suppressTags: true,
     });
+    console.error(`[host] thread ${ev.threadId} over turn budget — dropped @${record.handle} ping`);
   }
 
-  /** Session starts in this thread inside the rolling budget window. */
-  function threadStartCount(threadId: string, now: number): number {
-    return store
-      .getState()
-      .sessions.filter(
-        (s) =>
-          s.threadId === threadId &&
-          !(s.reason && NON_START_REASONS.has(s.reason)) &&
-          (s.queuedAt ?? s.startedAt) > now - BUDGET_WINDOW_MS,
-      ).length;
-  }
-
-  /** (a) Claim every unhandled tagged event — creation of the session record
-   *  IS the claim (durable intent). */
+  /** (a) Claim every unhandled tagged event as a turn on THE record for its
+   *  (thread, handle) — the turn IS the durable claim. An event is handled
+   *  iff some record's turns[] carries it (or a legacy triggerEventId
+   *  equals it). */
   function claimTags(now: number): void {
     // Snapshot the ids up front; re-read fresh state per event because each
     // claim mutates the store.
     const eventIds = store.getState().events.filter((e) => e.type === "tagged").map((e) => e.id);
     for (const evId of eventIds) {
       const state = store.getState();
-      if (state.sessions.some((s) => s.triggerEventId === evId)) continue; // handled
+      const handled = state.sessions.some(
+        (s) => s.triggerEventId === evId || (s.turns ?? []).some((t) => t.eventId === evId),
+      );
+      if (handled) continue;
       const ev = state.events.find((e) => e.id === evId);
       if (!ev) continue; // thread deleted mid-pass
-
-      const handle = String(ev.payload.handle ?? "");
+      const handle = String(ev.payload.handle ?? "") || "unknown";
+      const record = sessionFor(ev.threadId, handle);
 
       if (now - ev.at > STALE_TAG_MS) {
-        // Restart archaeology: never spawn on day-old intent. One log line,
-        // no post spam.
-        mintClaimMarker(ev, handle || "unknown", "error", "stale-skipped");
-        say(`[host] tag ${ev.id} (@${handle}) is ${Math.round((now - ev.at) / 3_600_000)}h old — stale-skipped`);
-        continue;
-      }
-
-      const entry = state.roster.find((r) => r.handle === handle);
-      if (!entry) {
-        mintClaimMarker(ev, handle || "unknown", "error", "unknown-handle");
-        console.error(`[host] tagged unknown handle @${handle} — ignoring`);
-        continue;
-      }
-
-      const mine = state.sessions.filter(
-        (s) => s.threadId === ev.threadId && s.handle === handle,
-      );
-      const live = mine.find(
-        (s) => s.state === "queued" || s.state === "spawning" || s.state === "running",
-      );
-      if (live) {
-        // v1: leave a live session alone — the post is on the board, the
-        // agent can `elan thread` to refresh. The marker makes that decision
-        // durable so the tag is never re-examined.
-        mintClaimMarker(ev, handle, "done", "absorbed-by-live-session");
-        say(`[host] @${handle} already ${live.state} in this thread — tag absorbed`);
-        continue;
-      }
-
-      const waiting = mine.find(
-        (s) =>
-          s.state === "waiting" &&
-          s.wakeOn?.event === "post" &&
-          s.endedAt != null &&
-          ev.at > s.endedAt,
-      );
-      if (waiting) {
-        if (children.has(waiting.id)) continue; // armed but still exiting — next pass
-        if (threadBudget > 0 && threadStartCount(ev.threadId, now) >= threadBudget) {
-          budgetDrop(ev, handle);
-          continue;
-        }
-        retireTrigger(waiting, now);
-        store.upsertSession({
-          ...waiting,
-          state: "queued",
-          queuedAt: now,
-          triggerEventId: ev.id,
-          wakeOn: undefined,
-        });
-        say(`[host] wake for @${handle}: tag ${ev.id}`);
-        continue;
-      }
-
-      if (threadBudget > 0 && threadStartCount(ev.threadId, now) >= threadBudget) {
-        budgetDrop(ev, handle);
-        continue;
-      }
-
-      store.upsertSession({
-        id: crypto.randomUUID(),
-        threadId: ev.threadId,
-        handle,
-        state: "queued",
-        triggerEventId: ev.id,
-        queuedAt: now,
-        startedAt: now,
-      });
-      say(`[host] queued @${handle} for tag ${ev.id}`);
-    }
-  }
-
-  function budgetDrop(ev: BoardEvent, handle: string): void {
-    // The mention-loop breaker (rule 5): the claim marker keeps the tag from
-    // ever being re-examined; the post tells the humans why nothing spawned.
-    mintClaimMarker(ev, handle, "error", "budget-exceeded");
-    store.addPost({
-      threadId: ev.threadId,
-      author: handle,
-      body:
-        `⚠︎ spawn budget exceeded (agent mention loop?) — dropped this @${handle} tag. ` +
-        `Limit: ${threadBudget} session starts per ${Math.round(BUDGET_WINDOW_MS / 60_000)} min per thread.`,
-    });
-    console.error(`[host] thread ${ev.threadId} over spawn budget — dropped @${handle} tag`);
-  }
-
-  /** (d) Match armed wakes against session-end events / posts that arrived
-   *  after the wake was armed. Same durable claim discipline: the flip to
-   *  "queued" + triggerEventId update is the consumption record. */
-  function matchWakes(now: number): void {
-    const state = store.getState();
-    for (const s of state.sessions) {
-      if (s.state !== "waiting" || !s.wakeOn || s.endedAt == null) continue;
-      if (children.has(s.id)) continue; // armed, process still exiting
-      let triggerId: string | undefined;
-      if (s.wakeOn.event === "session-end") {
-        const ev = state.events.find(
-          (e) =>
-            e.type === "session-end" &&
-            e.threadId === s.threadId &&
-            e.payload.handle === s.wakeOn!.handle &&
-            e.payload.sessionId !== s.id &&
-            e.at > s.endedAt!,
+        // Restart archaeology: never run on day-old intent. Claimed as a
+        // done turn; one log line, no post spam, no spawn.
+        appendTurn(record.id, { eventId: evId, state: "done", at: now });
+        settleIfNothingPending(record.id);
+        say(
+          `[host] tag ${evId} (@${handle}) is ${Math.round((now - ev.at) / 3_600_000)}h old — claimed as done, no turn`,
         );
-        triggerId = ev?.id;
-      } else {
-        const post = state.posts
-          .filter(
-            (p) =>
-              p.threadId === s.threadId &&
-              p.author !== s.handle &&
-              p.createdAt > s.endedAt!,
-          )
-          .sort((a, b) => a.createdAt - b.createdAt)[0];
-        triggerId = post?.id;
-      }
-      if (!triggerId) continue;
-      if (threadBudget > 0 && threadStartCount(s.threadId, now) >= threadBudget) {
-        failSession(s, "budget-exceeded",
-          `⚠︎ spawn budget exceeded (agent mention loop?) — @${s.handle}'s wake was dropped.`);
         continue;
       }
-      retireTrigger(s, now);
-      store.upsertSession({
-        ...s,
-        state: "queued",
-        queuedAt: now,
-        triggerEventId: triggerId,
-        wakeOn: undefined,
-      });
-      say(`[host] wake for @${s.handle}: trigger ${triggerId}`);
+
+      if (!state.roster.some((r) => r.handle === handle)) {
+        // Unknown handle: the claim is a done turn on THE record for the
+        // pair (reused on repeat tags — never a second record), the state
+        // an error badge, the post honest.
+        appendTurn(record.id, { eventId: evId, state: "done", at: now });
+        patchRecord(record.id, { state: "error", reason: "unknown-handle", endedAt: now });
+        store.addPost({
+          threadId: ev.threadId,
+          author: handle,
+          body: `⚠︎ @${handle} isn't on the roster — nothing ran for this ping.`,
+          suppressTags: true,
+        });
+        console.error(`[host] tagged unknown handle @${handle} — claimed, nothing runs`);
+        continue;
+      }
+
+      if (threadBudget > 0 && threadTurnCount(ev.threadId, now) >= threadBudget) {
+        budgetDrop(ev, record);
+        continue;
+      }
+
+      appendTurn(record.id, { eventId: evId, state: "pending", at: now });
+      say(`[host] queued a turn for @${handle}: tag ${evId}`);
     }
   }
 
-  /** (c) Overtime children: SIGTERM → 10s → SIGKILL. Level-triggered off the
-   *  child table; the exit handler files the "timeout" error. */
+  /** (b) Per-TURN timeout: SIGTERM → 10s → SIGKILL, in-flight turns only.
+   *  A hot idle child is NEVER killed for idling. */
   function enforceTimeouts(now: number): void {
     for (const ch of children.values()) {
-      if (ch.killedAt != null) {
-        if (now - ch.killedAt > KILL_GRACE_MS) {
+      const flight = ch.turn;
+      if (!flight) continue; // idle resident child — exempt, forever
+      if (flight.killedAt != null) {
+        if (now - flight.killedAt > KILL_GRACE_MS) {
           try {
             ch.proc.kill("SIGKILL");
           } catch {
@@ -2364,10 +2581,12 @@ export function startHost(opts: StartHostOptions = {}): ElanHost {
         }
         continue;
       }
-      if (now - ch.spawnedAt > sessionTimeoutMs) {
-        ch.timedOut = true;
-        ch.killedAt = now;
-        console.error(`[host] @${ch.handle} over ${sessionTimeoutMs}ms — SIGTERM`);
+      if (now - flight.startedAt > sessionTimeoutMs) {
+        flight.timedOut = true;
+        flight.killedAt = now;
+        console.error(
+          `[host] @${ch.handle}'s turn over ${sessionTimeoutMs}ms — SIGTERM (the record stays hot)`,
+        );
         try {
           ch.proc.kill("SIGTERM");
         } catch {
@@ -2377,300 +2596,500 @@ export function startHost(opts: StartHostOptions = {}): ElanHost {
     }
   }
 
-  /** (b) Spawn queued sessions oldest-first while slots are free. */
-  function spawnQueued(): void {
-    const queued = store
-      .getState()
-      .sessions.filter((s) => s.state === "queued")
-      .sort((a, b) => (a.queuedAt ?? a.startedAt) - (b.queuedAt ?? b.startedAt));
-    for (const s of queued) {
-      if (children.size >= maxSessions) break;
-      try {
-        startQueuedSession(s);
-      } catch (e) {
-        console.error(`[host] spawn failed for @${s.handle}:`, e);
-        failSession(s, "spawn-failed", `⚠︎ Can't start @${s.handle}: ${String(e)}`);
-      }
+  /** (c) Kick a drain loop for every record with pending turns. The Set is
+   *  the per-record lock: at most one loop per record; turns run strictly
+   *  sequentially inside it. Scheduling is idempotent, so concurrent
+   *  reconciler passes are safe. */
+  const turnLoopActive = new Set<string>();
+  function scheduleTurns(): void {
+    for (const s of store.getState().sessions) {
+      if (turnLoopActive.has(s.id)) continue;
+      if (!(s.turns ?? []).some((t) => t.state === "pending")) continue;
+      // Concurrency (rule 5): a record with no live child needs a slot.
+      if (!children.has(s.id) && children.size >= maxSessions) continue;
+      turnLoopActive.add(s.id);
+      void drainTurns(s.id)
+        .catch((e) => console.error(`[host] turn loop for ${s.id} failed:`, e))
+        .finally(() => {
+          turnLoopActive.delete(s.id);
+          reconcile(); // turns may have queued behind the loop
+        });
     }
   }
 
-  function startQueuedSession(s: AgentSessionRecord): void {
-    const state = store.getState();
-    const entry = state.roster.find((r) => r.handle === s.handle);
-    if (!entry) {
-      failSession(s, "runner-not-found", `⚠︎ Can't start @${s.handle}: not on the roster.`);
-      return;
+  async function drainTurns(recordId: string): Promise<void> {
+    for (;;) {
+      if (stopped) return;
+      const record = currentRecord(recordId);
+      if (!record) return; // thread/project deleted
+      const turn = (record.turns ?? []).find((t) => t.state === "pending");
+      if (!turn) return;
+      if (!children.has(recordId) && children.size >= maxSessions) return; // wait for a slot
+      await runTurn(record, turn);
     }
-    const thread = state.threads.find((t) => t.id === s.threadId);
-    if (!thread) {
-      // Thread deleted between claim and spawn — the record goes with it
-      // normally; this is pure defense.
-      store.upsertSession({ ...s, state: "error", reason: "spawn-failed", endedAt: nowMs() });
-      return;
-    }
+  }
 
+  async function runTurn(record: AgentSessionRecord, turn: Turn): Promise<void> {
+    const state = store.getState();
+    if (!state.threads.some((t) => t.id === record.threadId)) {
+      setTurnState(record.id, turn.eventId, "failed"); // thread gone — pure defense
+      return;
+    }
+    const entry = state.roster.find((r) => r.handle === record.handle);
+    if (!entry) {
+      failTurn(record, turn, "runner-not-found", `⚠︎ Can't run @${record.handle}: not on the roster.`);
+      return;
+    }
     const profile: HarnessProfile | undefined = HARNESSES[entry.harness];
     if (!profile) {
-      failSession(
-        s,
+      failTurn(
+        record,
+        turn,
         "runner-not-found",
-        `⚠︎ Can't start: no runner for harness \`${entry.harness}\` (@${s.handle}).`,
+        `⚠︎ Can't start: no runner for harness \`${entry.harness}\` (@${record.handle}).`,
       );
       return;
     }
+    try {
+      if (profile.residency) await runResidentTurn(record, turn, entry, profile);
+      else await runSerializedTurn(record, turn, entry, profile);
+    } catch (e) {
+      console.error(`[host] turn crashed for @${record.handle}:`, e);
+      const cur = currentRecord(record.id);
+      if (cur && (cur.turns ?? []).some((t) => t.eventId === turn.eventId && t.state === "pending"))
+        failTurn(cur, turn, "spawn-failed", `⚠︎ Can't run @${record.handle}: ${String(e)}`);
+    }
+  }
 
-    // Preflight (rule 6): resolve the binary on the CHILD's PATH — the env
-    // the process will actually see, not the host's possibly-polluted one.
-    const baseEnv = buildChildEnv({
+  // ── spawn plumbing shared by resident and serialized turns ─────────────────
+
+  /** Preflight (rule 6): the CHILD's env and PATH, the worktree cwd. */
+  function preflight(
+    record: AgentSessionRecord,
+    profile: HarnessProfile,
+  ): { binPath: string; cwd: string; env: Record<string, string> } | { reason: string; error: string } {
+    const state = store.getState();
+    const thread = state.threads.find((t) => t.id === record.threadId);
+    if (!thread) return { reason: "spawn-failed", error: "the thread is gone" };
+    const env = buildChildEnv({
       shimDir,
       probed: loginEnv(),
       elan: {
         ELAN_URL: hostUrl,
-        ELAN_THREAD: s.threadId,
-        ELAN_AGENT: s.handle,
-        ELAN_SESSION: s.id,
+        ELAN_THREAD: record.threadId,
+        ELAN_AGENT: record.handle,
+        ELAN_SESSION: record.id, // the RECORD id, stable across every turn
       },
     });
-    const binPath = whichOnPath(profile.bin, baseEnv.PATH);
-    if (!binPath) {
-      failSession(
-        s,
-        "runner-not-found",
-        `⚠︎ Can't start @${s.handle}: \`${profile.bin}\` not found on the session PATH ` +
+    const binPath = whichOnPath(profile.bin, env.PATH);
+    if (!binPath)
+      return {
+        reason: "runner-not-found",
+        error:
+          `\`${profile.bin}\` not found on the session PATH ` +
           `(built from the login-shell probe plus fallback dirs).`,
-      );
-      return;
-    }
+      };
+    const cwd = ensureWorktree(thread, record.handle);
+    return { binPath, cwd, env };
+  }
 
-    const cwd = ensureWorktree(thread, s.handle); // before render: context shows the path
-    const context = renderThreadContext(store.getState(), thread.id, s.handle);
-    // A queued record that already has a harness session id is a wake — the
-    // resume/fresh split is derived from state, never remembered in memory.
-    const isResume = profile.sessionId != null && !!s.harnessSessionId;
-    // Mint-strategy harnesses (grok's create-or-resume `-s`) get ONE id per
-    // session record, minted at first spawn and re-passed forever after.
-    let harnessSessionId = s.harnessSessionId;
-    if (profile.sessionId?.mode === "mint" && !harnessSessionId)
-      harnessSessionId = crypto.randomUUID();
+  function makeFlight(eventId: string): {
+    flight: TurnFlight;
+    settled: Promise<{ kind: "turn-end" } | { kind: "exit"; code: number }>;
+  } {
+    let resolveFn!: (r: { kind: "turn-end" } | { kind: "exit"; code: number }) => void;
+    const settled = new Promise<{ kind: "turn-end" } | { kind: "exit"; code: number }>(
+      (resolve) => {
+        resolveFn = resolve;
+      },
+    );
+    const flight: TurnFlight = {
+      eventId,
+      startedAt: nowMs(),
+      lines: [],
+      settled: false,
+      settle(result) {
+        if (flight.settled) return;
+        flight.settled = true;
+        resolveFn(result);
+      },
+    };
+    return { flight, settled };
+  }
 
-    const spec = profile.runner({
-      binPath,
-      cwd,
-      prompt: isResume
-        ? `Woken: ${triggerDescription(s, store.getState())}. Run \`elan thread\` for current context.`
-        : context,
+  /** Pumps + exit handling shared by both child kinds. Stdout: tolerant
+   *  JSONL, logged + broadcast live, collected per-FLIGHT for extraction;
+   *  capture-strategy harnesses surface their native session id here. */
+  function wireChild(ch: ChildInfo, profile: HarnessProfile): void {
+    const capture =
+      profile.sessionId?.mode === "capture" ? profile.sessionId.capture : undefined;
+    const isTurnEnd = profile.residency?.isTurnEnd;
+    void pumpLines(ch.proc.stdout, (line) => {
+      logLine(ch.logPath, "out", line);
+      broadcastSessionLine(ch.recordId, "out", line);
+      const flight = ch.turn;
+      if (flight) {
+        flight.lines.push(line);
+        if (flight.lines.length > 2_000) flight.lines.splice(0, flight.lines.length - 2_000);
+      }
+      const msg = parseLine(line);
+      if (!msg) return;
+      ch.jsonEvents++;
+      if (capture) {
+        const sid = capture(msg);
+        if (typeof sid === "string" && sid) {
+          const cur = currentRecord(ch.recordId);
+          if (cur && cur.harnessSessionId !== sid)
+            store.upsertSession({ ...cur, harnessSessionId: sid });
+        }
+      }
+      if (isTurnEnd?.(msg)) ch.turn?.settle({ kind: "turn-end" });
+    });
+    void pumpLines(ch.proc.stderr, (line) => {
+      logLine(ch.logPath, "err", line);
+      broadcastSessionLine(ch.recordId, "err", line);
+      ch.stderrRaw = (ch.stderrRaw + line + "\n").slice(-8_000);
+    });
+    void ch.proc.exited.then((code) => {
+      if (children.get(ch.recordId) === ch) children.delete(ch.recordId);
+      const c = typeof code === "number" ? code : -1;
+      if (ch.turn) {
+        // Mid-turn death — the awaiting turn runner owns the outcome.
+        ch.turn.settle({ kind: "exit", code: c });
+      } else if (!stopped) {
+        // Idle death: resurrection material, never an ending. The record
+        // stays idle; harnessSessionId is the continuity.
+        patchRecord(ch.recordId, { procKey: undefined, exitCode: c });
+        say(
+          `[host] @${ch.handle}'s resident child exited while idle (code ${c}) — the next ping resurrects it`,
+        );
+      }
+      if (!stopped) reconcile(); // a slot freed
+    });
+  }
+
+  // ── resident turns (claude-code, pi, mock) ─────────────────────────────────
+
+  /** Spawn (or resurrect) the ONE resident child for a record. */
+  function spawnResident(
+    record: AgentSessionRecord,
+    entry: RosterEntry,
+    profile: HarnessProfile,
+    resume: string | undefined,
+  ): { ok: true; child: ChildInfo } | { ok: false; reason: string; error: string } {
+    const pre = preflight(record, profile);
+    if ("error" in pre) return { ok: false, reason: pre.reason, error: pre.error };
+    const argv = profile.residency!.argv({
+      binPath: pre.binPath,
       instructions: shortInstructions(entry.handle),
       model: entry.model,
-      sessionId: s.id,
+      resume,
+    });
+    const logPath = record.logPath ?? join(sessionsDir, `${record.id}.log`);
+    patchRecord(record.id, { state: "spawning", logPath });
+    let proc: Subprocess<"pipe", "pipe", "pipe">;
+    try {
+      proc = Bun.spawn(argv, {
+        cwd: pre.cwd,
+        env: pre.env,
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+    } catch (e) {
+      return { ok: false, reason: "spawn-failed", error: `can't start \`${argv[0]}\`: ${String(e)}` };
+    }
+    const ch: ChildInfo = {
+      proc,
+      stdin: proc.stdin,
+      recordId: record.id,
+      threadId: record.threadId,
+      handle: record.handle,
+      harness: entry.harness,
+      extract: profile.extract,
+      resident: true,
+      isResume: !!resume,
+      spawnedAt: nowMs(),
+      jsonEvents: 0,
+      stderrRaw: "",
+      logPath,
+    };
+    children.set(record.id, ch);
+    maybeEmitSessionStart(record);
+    patchRecord(record.id, {
+      state: "running",
+      procKey: String(proc.pid),
+      logPath,
+      exitCode: undefined,
+      wakeOn: undefined,
+    });
+    say(
+      `[host] @${record.handle} resident child up (pid ${proc.pid}, cwd ${pre.cwd}${resume ? ", resume" : ""})`,
+    );
+    wireChild(ch, profile);
+    return { ok: true, child: ch };
+  }
+
+  async function runResidentTurn(
+    record: AgentSessionRecord,
+    turn: Turn,
+    entry: RosterEntry,
+    profile: HarnessProfile,
+  ): Promise<void> {
+    const first = await attemptResidentTurn(record, turn, entry, profile, true);
+    if (first !== "resume-fell-back") return;
+    // A resumed resident that died instantly without a single stream event
+    // is a broken --resume (expired harness session etc.) — fall back ONCE
+    // to a fresh resident with full context. Clearing harnessSessionId
+    // makes the retry fresh, so this can never loop.
+    patchRecord(record.id, { harnessSessionId: undefined, reason: "resume-fell-back" });
+    say(`[host] @${record.handle} resume died instantly — one fresh resident with full context`);
+    const cur = currentRecord(record.id);
+    if (!cur) return;
+    await attemptResidentTurn(cur, turn, entry, profile, false);
+  }
+
+  async function attemptResidentTurn(
+    record: AgentSessionRecord,
+    turn: Turn,
+    entry: RosterEntry,
+    profile: HarnessProfile,
+    allowResume: boolean,
+  ): Promise<"settled" | "resume-fell-back"> {
+    let ch = children.get(record.id);
+    let fullContext = false;
+    if (!ch) {
+      const rec0 = currentRecord(record.id) ?? record;
+      const resume = allowResume && rec0.harnessSessionId ? rec0.harnessSessionId : undefined;
+      const spawned = spawnResident(rec0, entry, profile, resume);
+      if (!spawned.ok) {
+        failTurn(rec0, turn, spawned.reason, `⚠︎ Can't start @${record.handle}: ${spawned.error}`, {
+          procKey: undefined,
+        });
+        return "settled";
+      }
+      ch = spawned.child;
+      fullContext = !resume; // a fresh conversation needs the whole thread
+    }
+
+    const rec = currentRecord(record.id);
+    if (!rec) return "settled";
+    const turnNo = (rec.turns ?? []).findIndex((t) => t.eventId === turn.eventId) + 1;
+    const prompt = buildTurnPrompt(store.getState(), rec, turn, fullContext);
+    const { flight, settled } = makeFlight(turn.eventId);
+    ch.turn = flight;
+    patchRecord(record.id, { state: "running" });
+    try {
+      ch.stdin!.write(profile.residency!.encodeTurn(prompt, turnNo) + "\n");
+      await ch.stdin!.flush();
+    } catch {
+      // The child died under us — its exit handler settles the flight.
+    }
+    const result = await settled;
+    ch.turn = undefined;
+    if (stopped) return "settled";
+    const cur = currentRecord(record.id);
+    if (!cur) return "settled"; // thread deleted mid-turn
+    const stderrTail = stripAnsi(ch.stderrRaw).slice(-1_000).trim();
+    const fence = stderrTail ? `\n\`\`\`\n${stderrTail}\n\`\`\`` : "";
+
+    if (result.kind === "turn-end") {
+      const outcome = extractOutcome(ch.extract, flight.lines, 0);
+      if (outcome.ok) completeTurn(cur, turn, outcome.text, flight.startedAt);
+      else
+        failTurn(cur, turn, "error-result", `⚠︎ ${outcome.text || "The turn reported an error."}${fence}`);
+      return "settled";
+    }
+
+    // The child exited mid-turn.
+    if (flight.timedOut) {
+      failTurn(
+        cur,
+        turn,
+        "timeout",
+        `⚠︎ Turn timed out after ${Math.round(sessionTimeoutMs / 60_000)} min and its child was ` +
+          `killed. The session stays hot — ping @${record.handle} again to retry.${fence}`,
+        { exitCode: result.code, procKey: undefined },
+      );
+      return "settled";
+    }
+    if (
+      ch.isResume &&
+      result.code !== 0 &&
+      nowMs() - ch.spawnedAt < RESUME_FALLBACK_WINDOW_MS &&
+      ch.jsonEvents === 0
+    )
+      return "resume-fell-back";
+    const outcome = extractOutcome(ch.extract, flight.lines, result.code);
+    if (outcome.ok)
+      completeTurn(cur, turn, outcome.text, flight.startedAt, {
+        exitCode: result.code,
+        procKey: undefined,
+      });
+    else
+      failTurn(
+        cur,
+        turn,
+        result.code !== 0 ? "nonzero-exit" : "error-result",
+        `⚠︎ ${outcome.text || `The child exited with code ${result.code} mid-turn.`}${fence}`,
+        { exitCode: result.code, procKey: undefined },
+      );
+    return "settled";
+  }
+
+  // ── serialized turns (cursor, grok, opencode + fresh codex/devin/pool) ─────
+
+  async function runSerializedTurn(
+    record: AgentSessionRecord,
+    turn: Turn,
+    entry: RosterEntry,
+    profile: HarnessProfile,
+  ): Promise<void> {
+    const first = await attemptSerializedTurn(record, turn, entry, profile, true);
+    if (first !== "resume-fell-back") return;
+    patchRecord(record.id, { harnessSessionId: undefined, reason: "resume-fell-back" });
+    say(`[host] @${record.handle} resume died instantly — one fresh turn with full context`);
+    const cur = currentRecord(record.id);
+    if (!cur) return;
+    await attemptSerializedTurn(cur, turn, entry, profile, false);
+  }
+
+  async function attemptSerializedTurn(
+    record: AgentSessionRecord,
+    turn: Turn,
+    entry: RosterEntry,
+    profile: HarnessProfile,
+    allowResume: boolean,
+  ): Promise<"settled" | "resume-fell-back"> {
+    const rec0 = currentRecord(record.id) ?? record;
+    if (!profile.runner) {
+      failTurn(
+        rec0,
+        turn,
+        "runner-not-found",
+        `⚠︎ Can't start: no runner for harness \`${entry.harness}\` (@${record.handle}).`,
+      );
+      return "settled";
+    }
+    const pre = preflight(rec0, profile);
+    if ("error" in pre) {
+      failTurn(rec0, turn, pre.reason, `⚠︎ Can't start @${record.handle}: ${pre.error}`);
+      return "settled";
+    }
+    const isResume = allowResume && profile.sessionId != null && !!rec0.harnessSessionId;
+    // Mint-strategy harnesses (grok's create-or-resume `-s`) get ONE id per
+    // record, minted at the first turn and re-passed forever after.
+    let harnessSessionId = rec0.harnessSessionId;
+    if (profile.sessionId?.mode === "mint" && !harnessSessionId)
+      harnessSessionId = crypto.randomUUID();
+    // Continuity harnesses get the short prompt once a conversation exists;
+    // fresh-only harnesses (codex/devin/pool) get full context every turn.
+    const prompt = buildTurnPrompt(store.getState(), rec0, turn, !isResume);
+    const spec = profile.runner({
+      binPath: pre.binPath,
+      cwd: pre.cwd,
+      prompt,
+      instructions: shortInstructions(entry.handle),
+      model: entry.model,
+      sessionId: record.id,
       sessionDir: sessionsDir,
-      resume: isResume ? { harnessSessionId: s.harnessSessionId! } : undefined,
+      resume: isResume ? { harnessSessionId: rec0.harnessSessionId! } : undefined,
       harnessSessionId,
     });
     if (!("argv" in spec)) {
-      failSession(s, "spawn-failed", `⚠︎ Can't start @${s.handle}: ${spec.error}`);
-      return;
+      failTurn(rec0, turn, "spawn-failed", `⚠︎ Can't start @${record.handle}: ${spec.error}`);
+      return "settled";
     }
     for (const f of spec.files ?? []) writeFileSync(f.path, f.content);
 
-    const logPath = join(sessionsDir, `${s.id}.log`);
-    const env = { ...baseEnv, ...spec.env };
+    const logPath = rec0.logPath ?? join(sessionsDir, `${record.id}.log`);
+    patchRecord(record.id, { state: "spawning", logPath, harnessSessionId });
     let proc: Subprocess<"ignore", "pipe", "pipe">;
     try {
       proc = Bun.spawn(spec.argv, {
-        cwd,
-        env,
+        cwd: pre.cwd,
+        env: { ...pre.env, ...spec.env },
         stdin: "ignore",
         stdout: "pipe",
         stderr: "pipe",
       });
     } catch (e) {
-      failSession(s, "spawn-failed", `⚠︎ Can't start \`${spec.argv[0]}\`: ${String(e)}`, {
+      failTurn(rec0, turn, "spawn-failed", `⚠︎ Can't start \`${spec.argv[0]}\`: ${String(e)}`, {
         logPath,
       });
-      return;
+      return "settled";
     }
-
+    const { flight, settled } = makeFlight(turn.eventId);
     const ch: ChildInfo = {
       proc,
-      threadId: s.threadId,
-      handle: s.handle,
+      recordId: record.id,
+      threadId: record.threadId,
+      handle: record.handle,
       harness: entry.harness,
       extract: profile.extract,
+      resident: false,
       isResume,
       spawnedAt: nowMs(),
-      stdoutLines: [],
       jsonEvents: 0,
       stderrRaw: "",
       logPath,
-      timedOut: false,
+      turn: flight,
     };
-    children.set(s.id, ch);
-    store.upsertSession({
-      ...s,
-      harnessSessionId, // minted ids persist here; captured ids arrive below
+    children.set(record.id, ch);
+    maybeEmitSessionStart(rec0);
+    patchRecord(record.id, {
       state: "running",
       procKey: String(proc.pid),
-      startedAt: ch.spawnedAt,
       logPath,
-      endedAt: undefined,
       exitCode: undefined,
       wakeOn: undefined,
     });
-    store.addEvent({
-      threadId: s.threadId,
-      actor: s.handle,
-      type: "session-start",
-      payload: { sessionId: s.id, handle: s.handle },
-    });
     say(
-      `[host] @${s.handle} running (pid ${proc.pid}, cwd ${cwd}${isResume ? ", resume" : ""})`,
+      `[host] @${record.handle} turn running (pid ${proc.pid}, cwd ${pre.cwd}${isResume ? ", resume" : ""})`,
     );
+    wireChild(ch, profile);
 
-    // stdout: tolerant JSONL, logged + broadcast live. Capture-strategy
-    // harnesses surface their native session id here (claude/cursor:
-    // session_id on every event; pi: the first {"type":"session"} line;
-    // opencode: sessionID on every event) — that id is the resume handle.
-    const capture =
-      profile.sessionId?.mode === "capture" ? profile.sessionId.capture : undefined;
-    void pumpLines(proc.stdout, (line) => {
-      logLine(logPath, "out", line);
-      broadcastSessionLine(s.id, "out", line);
-      ch.stdoutLines.push(line);
-      if (ch.stdoutLines.length > 2_000) ch.stdoutLines.splice(0, ch.stdoutLines.length - 2_000);
-      const msg = parseLine(line);
-      if (!msg) return;
-      ch.jsonEvents++;
-      if (!capture) return;
-      const sid = capture(msg);
-      if (typeof sid !== "string" || !sid) return;
-      const cur = store.getState().sessions.find((x) => x.id === s.id);
-      if (cur && cur.harnessSessionId !== sid)
-        store.upsertSession({ ...cur, harnessSessionId: sid });
-    });
-
-    void pumpLines(proc.stderr, (line) => {
-      logLine(logPath, "err", line);
-      broadcastSessionLine(s.id, "err", line);
-      ch.stderrRaw = (ch.stderrRaw + line + "\n").slice(-8_000);
-    });
-
-    void proc.exited.then((code) => {
-      try {
-        finishChild(s.id, typeof code === "number" ? code : -1);
-      } catch (e) {
-        console.error("[host] session finish failed:", e);
-      }
-      reconcile(); // a slot freed even if the session record vanished
-    });
-  }
-
-  function finishChild(sessionId: string, exitCode: number): void {
-    const ch = children.get(sessionId);
-    children.delete(sessionId);
-    if (!ch || stopped) return;
-    const s = store.getState().sessions.find((x) => x.id === sessionId);
-    if (!s || s.state === "done" || s.state === "error") return;
-    const now = nowMs();
+    const result = await settled; // serialized turns settle by exit only
+    ch.turn = undefined;
+    if (stopped || result.kind !== "exit") return "settled";
+    const cur = currentRecord(record.id);
+    if (!cur) return "settled";
     const stderrTail = stripAnsi(ch.stderrRaw).slice(-1_000).trim();
-
-    if (s.state === "waiting" && s.wakeOn) {
-      // wake-me armed mid-run: the process ending IS the wait beginning.
-      // endedAt stays the arm time — only later triggers may wake it.
-      store.upsertSession({
-        ...s,
-        procKey: undefined,
-        exitCode,
-        endedAt: s.endedAt ?? now,
-      });
-      emitSessionEnd(s, "waiting");
-      say(`[host] @${s.handle} waiting on ${JSON.stringify(s.wakeOn)}`);
-      return;
-    }
-
-    if (ch.timedOut) {
-      failSession(
-        s,
+    const fence = stderrTail ? `\n\`\`\`\n${stderrTail}\n\`\`\`` : "";
+    if (flight.timedOut) {
+      failTurn(
+        cur,
+        turn,
         "timeout",
-        `⚠︎ Session timed out after ${Math.round(sessionTimeoutMs / 60_000)} min and was killed.` +
-          (stderrTail ? `\n\`\`\`\n${stderrTail}\n\`\`\`` : ""),
-        { exitCode },
+        `⚠︎ Turn timed out after ${Math.round(sessionTimeoutMs / 60_000)} min and was killed. ` +
+          `The session stays hot — ping @${record.handle} again to retry.${fence}`,
+        { exitCode: result.code, procKey: undefined },
       );
-      return;
+      return "settled";
     }
-
-    // A resume that dies instantly without emitting a single stream event is
-    // a broken --resume (expired harness session etc.) — fall back ONCE to a
-    // fresh spawn with the full context. Clearing harnessSessionId makes the
-    // retry a fresh run, so this can never loop.
     if (
-      ch.isResume &&
-      exitCode !== 0 &&
-      now - ch.spawnedAt < RESUME_FALLBACK_WINDOW_MS &&
+      isResume &&
+      result.code !== 0 &&
+      nowMs() - ch.spawnedAt < RESUME_FALLBACK_WINDOW_MS &&
       ch.jsonEvents === 0
-    ) {
-      store.upsertSession({
-        ...s,
-        state: "queued",
-        queuedAt: now,
-        harnessSessionId: undefined,
-        reason: "resume-fell-back",
+    )
+      return "resume-fell-back";
+    const outcome = extractOutcome(ch.extract, flight.lines, result.code);
+    if (outcome.ok)
+      completeTurn(cur, turn, outcome.text, flight.startedAt, {
+        exitCode: result.code,
         procKey: undefined,
-        exitCode,
-        endedAt: undefined,
       });
-      say(`[host] @${s.handle} resume died instantly — falling back to a fresh spawn`);
-      return;
-    }
-
-    const outcome = extractOutcome(ch.extract, ch.stdoutLines, exitCode);
-    if (outcome.ok) {
-      store.upsertSession({
-        ...s,
-        state: "done",
-        procKey: undefined,
-        exitCode,
-        endedAt: now,
-      });
-      emitSessionEnd(s, "done");
-      // Silent-success fallback: a summoned agent that ends ok having made
-      // ZERO board mutations would otherwise vanish — its answer lived only
-      // in the stream (weak models answer in-band instead of running elan).
-      // Work must never vanish: post the extracted final message on its
-      // behalf. Agents that used elan are left alone.
-      const spoke =
-        store.getState().posts.some(
-          (p) => p.threadId === s.threadId && p.author === s.handle && p.createdAt >= s.startedAt,
-        ) ||
-        store.getState().events.some(
-          (e) =>
-            e.threadId === s.threadId && e.actor === s.handle &&
-            e.at >= s.startedAt && e.type !== "session-start" && e.type !== "session-end",
-        );
-      if (!spoke && outcome.text?.trim()) {
-        // suppressTags: a ventriloquized post must never summon anyone.
-        store.addPost({
-          threadId: s.threadId,
-          author: s.handle,
-          body: outcome.text.trim(),
-          suppressTags: true,
-        });
-        say(`[host] @${s.handle} never used elan — posted its final message as fallback`);
-      }
-      say(`[host] @${s.handle} session done`);
-      return;
-    }
-
-    // Rule 3: the extracted stream message leads; the ANSI-stripped stderr
-    // tail is a fenced afterthought.
-    failSession(
-      s,
-      exitCode !== 0 ? "nonzero-exit" : "error-result",
-      `⚠︎ ${outcome.text || `Session exited with code ${exitCode}.`}` +
-        (stderrTail ? `\n\`\`\`\n${stderrTail}\n\`\`\`` : ""),
-      { exitCode },
-    );
+    else
+      failTurn(
+        cur,
+        turn,
+        result.code !== 0 ? "nonzero-exit" : "error-result",
+        `⚠︎ ${outcome.text || `Turn exited with code ${result.code}.`}${fence}`,
+        { exitCode: result.code, procKey: undefined },
+      );
+    return "settled";
   }
-
   // Re-entrancy guard: mutations made inside a pass re-enter subscribe →
   // request another pass instead of recursing; every pass is idempotent
   // because all work is re-derived from state.
@@ -2689,9 +3108,8 @@ export function startHost(opts: StartHostOptions = {}): ElanHost {
         const now = nowMs();
         try {
           claimTags(now);
-          matchWakes(now);
           enforceTimeouts(now);
-          spawnQueued();
+          scheduleTurns();
         } catch (e) {
           console.error("[host] reconciler pass failed:", e);
         }
@@ -2701,16 +3119,9 @@ export function startHost(opts: StartHostOptions = {}): ElanHost {
     }
   }
 
-  // ── boot recovery (rule 2) ─────────────────────────────────────────────────
-  // Runs before the subscription: no live children can exist yet, so every
-  // "spawning"/"running" record is a lie left by a crash. Waiting records are
-  // untouched — no process is their normal state.
-  for (const s of store.getState().sessions) {
-    if (s.state === "spawning" || s.state === "running") {
-      say(`[host] @${s.handle} session ${s.id} orphaned by restart`);
-      failSession(s, "orphaned-by-restart", undefined);
-    }
-  }
+  // No orphan sweep here: the boot migration already normalized
+  // spawning/running records (no child survives a restart) to idle with the
+  // interrupted turn failed — NOT an error; the next ping simply runs a turn.
 
   const unsubscribe = store.subscribe(() => {
     broadcast();
@@ -2723,12 +3134,12 @@ export function startHost(opts: StartHostOptions = {}): ElanHost {
   say(`[host] state file: ${stateFile}`);
   say(`[host] elan shim:  ${shimPath}`);
   say(
-    `[host] limits: ${maxSessions} concurrent, ${threadBudget > 0 ? threadBudget : "uncapped"} starts/${Math.round(
+    `[host] limits: ${maxSessions} concurrent, ${threadBudget > 0 ? threadBudget : "uncapped"} turns/${Math.round(
       BUDGET_WINDOW_MS / 60_000,
-    )}min/thread, ${Math.round(sessionTimeoutMs / 60_000)}min timeout`,
+    )}min/thread, ${Math.round(sessionTimeoutMs / 60_000)}min per-turn timeout`,
   );
 
-  reconcile(); // pick up queued/stale work persisted before the restart
+  reconcile(); // pick up pending turns / unclaimed tags persisted before the restart
 
   return {
     port,

@@ -57,29 +57,39 @@ Inherited from the brainstorm, structural to everything here:
   session. Board posts, artifacts, status moves, resolutions, tags. The
   passive stream is narration; only CLI calls create durable board objects.
 
-## Tag → spawn lifecycle
+## Hot sessions — one per (thread, agent), forever
 
-1. A post's body mentions `@handle` (parsed against the roster; the store
-   emits the `tagged` event, the host orchestrator reacts to it).
-2. If the handle has a `waiting` session in this thread whose `wakeOn`
-   matches → **resume** it (harness `--resume <harnessSessionId>`), injecting
-   the triggering post. Else if it has no live session → **spawn**.
-3. Spawn: provision the thread worktree if absent (below), build the argv
-   from the harness runner registry, `cwd` = worktree, env = `ELAN_URL`,
-   `ELAN_THREAD`, `ELAN_AGENT`, `ELAN_SESSION`, and `PATH` prepended with
-   the host's shim dir so `elan` resolves inside the session.
-4. The initial prompt = **rendered thread context** (next section) + the
-   tagging post highlighted as the instruction.
-5. The host parses the harness's stdout JSONL minimally: capture the
-   harness-native session id (for resume), flip the session record
-   spawning→running→done/error, emit `session-start`/`session-end` events.
-   Full telemetry rendering (Mari's reducer in a side panel) is later work.
-6. Session ends → `session-end` event on the board; any sessions waiting on
-   that event get resumed.
+The wake/end/resume model is dead (2026-07-10): its races cloned agents —
+two of the same handle live in one thread. The replacement is structural:
 
-An agent already running in the thread that gets tagged again is left alone
-in v1 (the post is on the board; it can `elan thread` to refresh). Queued
-follow-up injection is later work.
+- **Exactly one session record per (thread, handle).** Created on the first
+  ping, never duplicated, never suspended. The host enforces this as an
+  invariant and de-dupes legacy records at boot.
+- **Every ping is a turn.** A `tagged` event (explicit @mention, or an
+  implicit one from replying to the agent's exchange — a reply IS a ping)
+  appends a pending turn to the record's `turns[]`. Durable claims: an
+  event is handled iff some record's turns[] carries it. Turns run strictly
+  one at a time per record — two children for one (thread, handle) is
+  impossible by construction.
+- **Residency where the harness allows it**: claude-code (bidirectional
+  `--input-format stream-json`) and pi (`--mode rpc`) keep ONE live child;
+  new turns are injected as user messages on stdin. The child is never
+  killed for idling (the per-turn timeout applies to in-flight turns only).
+  If it dies, the next turn resurrects the SAME record (`--resume` /
+  `--session-id` continuity).
+- **Serialized turns elsewhere**: cursor (`--resume <chatId>`), grok
+  (`-s <minted-uuid>`), opencode (`-s <sessionID>`) run each turn as a
+  one-shot on the SAME harness conversation; codex/devin/pool (no usable
+  resume) run each turn fresh with full thread context. Same invariant,
+  same record, no residency.
+- Lifecycle: `queued → spawning → running ⇄ idle` (+ `error`, from which
+  the next ping retries). `waiting`/`done` are legacy states, normalized
+  at boot. `session-start` fires once per record; `session-end` only on
+  error.
+- Spawn mechanics are unchanged: worktree provisioned on first ping, argv
+  from the registry, `ELAN_*` env, shim on PATH, context rendered per the
+  section below (turn prompts carry the triggering post + a pointer to
+  `elan thread` for a refresh).
 
 ### Harness runners (v1)
 
@@ -190,14 +200,12 @@ processes — agents have bash for that; policy files tell them how.
   involvement, no gate. `done`/`canceled` threads' worktrees are pruned by a
   janitor sweep (with `git worktree remove`), never eagerly.
 
-## Wake-on-event
+## Wake-on-event — removed
 
-`wake-me` writes `wakeOn` on the session record and ends the harness process.
-The host watches board mutations; on match it resumes the harness session
-with the triggering post injected ("@gpt-5.6 finished in #12 — their last
-post: …"). To the agent it reads like a blocking wait that returned; in
-reality nothing was running. Crash-safe: `wakeOn` is durable state, so an app
-restart re-arms all waits.
+Retired with the hot-session model: there is nothing to wake because
+sessions never end. `elan wake-me` / `elan wait` now explain exactly that
+("end your turn; new pings arrive as new turns") and exit 0 so old agent
+habits don't error; `POST /api/sessions/:id/wake-on` answers 410 Gone.
 
 ## The elan CLI — wiring
 

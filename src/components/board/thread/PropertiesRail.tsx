@@ -174,6 +174,17 @@ function SessionChip({ record }: { record: AgentSessionRecord }) {
       <span className="ml-auto shrink-0 text-[11px] text-muted-foreground">Queued</span>
     );
   }
+  // Idle: the hot model's steady state — alive, between turns.
+  if (state === "idle") {
+    return (
+      <span
+        className="ml-auto shrink-0 text-[11px] text-muted-foreground"
+        title="Hot — ready for the next ping"
+      >
+        Idle
+      </span>
+    );
+  }
   return (
     <span
       className="ml-auto shrink-0 text-[11px] text-muted-foreground"

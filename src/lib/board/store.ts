@@ -267,6 +267,22 @@ export function createBoardStore({ initial, persist }: BoardStoreOptions): Board
         : parseMentions(input.body, state.roster).filter(
             (handle) => handle !== input.author,
           );
+      // Replying to an agent's exchange IS pinging that agent — a reply is a
+      // message to its author (docs/DATA-MODEL.md). Implicit, deduped against
+      // explicit mentions; never for self-replies, human-rooted exchanges, or
+      // suppressed (host-fallback) posts.
+      if (post.replyTo && !input.suppressTags) {
+        const root = state.posts.find((p) => p.id === post.replyTo);
+        if (
+          root &&
+          root.author !== input.author &&
+          root.author !== USER &&
+          state.roster.some((r) => r.handle === root.author) &&
+          !mentions.includes(root.author)
+        ) {
+          mentions.push(root.author);
+        }
+      }
       const tagged: BoardEvent[] = mentions.map((handle) => ({
         id: nextId(),
         threadId: input.threadId,

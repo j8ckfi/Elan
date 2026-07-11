@@ -215,6 +215,43 @@ describe("seed data — flagship exchange", () => {
   });
 });
 
+describe("addPost — reply pings", () => {
+  test("replying to an agent's exchange tags that agent implicitly", () => {
+    const store = seededStore();
+    const project = store.getState().projects[0];
+    const thread = store.createThread({ projectId: project.id, title: "t", body: "" });
+    const root = store.addPost({ threadId: thread.id, author: "fable-5", body: "plan ready" });
+
+    store.addPost({ threadId: thread.id, author: "user", body: "looks wrong, redo section 2", replyTo: root.id });
+
+    const tags = store.getState().events.filter(
+      (e) => e.threadId === thread.id && e.type === "tagged" && e.payload.handle === "fable-5",
+    );
+    expect(tags).toHaveLength(1);
+    expect(tags[0].actor).toBe("user");
+  });
+
+  test("no implicit tag for self-replies, human roots, or already-mentioned authors", () => {
+    const store = seededStore();
+    const project = store.getState().projects[0];
+    const thread = store.createThread({ projectId: project.id, title: "t", body: "" });
+
+    const humanRoot = store.addPost({ threadId: thread.id, author: "user", body: "my note" });
+    store.addPost({ threadId: thread.id, author: "user", body: "self follow-up", replyTo: humanRoot.id });
+
+    const agentRoot = store.addPost({ threadId: thread.id, author: "gpt-5.6", body: "done" });
+    store.addPost({ threadId: thread.id, author: "gpt-5.6", body: "addendum", replyTo: agentRoot.id });
+    store.addPost({ threadId: thread.id, author: "user", body: "@gpt-5.6 thanks, ship it", replyTo: agentRoot.id });
+
+    const tags = store.getState().events.filter(
+      (e) => e.threadId === thread.id && e.type === "tagged",
+    );
+    // Exactly one: the explicit @gpt-5.6 (implicit reply-ping deduped against it).
+    expect(tags).toHaveLength(1);
+    expect(tags[0].payload.handle).toBe("gpt-5.6");
+  });
+});
+
 describe("createProject", () => {
   test("derives a key from the name and de-dupes against existing keys", () => {
     const store = createLocalStore();
