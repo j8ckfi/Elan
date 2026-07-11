@@ -1,11 +1,11 @@
 # Elan
 
+Super, super beta. Mostly slop right now.
+
 Elan is a **singleplayer agent orchestrator** shaped like Linear crossed with
 Slack — an issue tracker where the assignees are your model subscriptions.
 File work, tag agents into it, and watch them plan, implement, review, and
-merge on a shared board. It's a fork of [Mari](https://github.com/j8ckfi/Mari),
-keeping Mari's adapter/host core as its telemetry channel while replacing the
-chat shell with the board.
+merge on a shared board. 
 
 Start here: **[docs/ELAN.md](docs/ELAN.md)** — the product, the kernel, the
 glossary, and the locked design decisions.
