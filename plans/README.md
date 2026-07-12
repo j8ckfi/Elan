@@ -11,7 +11,7 @@ The advisor maintains this index during dispatched execution.
 |------|-------|----------|--------|------------|--------|
 | 001 | Purge the orphaned Mari chat shell and rebuild Settings as Elan's | P1 | M | — | DONE (approved 2026-07-12; worktree `.claude/worktrees/agent-a4a0e8f86ae25f0ec`, 3 commits, merged to main) |
 | 002 | Obliterate local demo mode — the board is always host-backed | P1 | L | — | DONE (approved 2026-07-12 after 1 revision; worktree `.claude/worktrees/agent-ac53b9bd876cb0798`, 7 commits, merged to main. Bonus: fixed the tab-restore-loss bug local mode was masking; found relative-ELAN_STATE_DIR host bug — follow-up flagged) |
-| 003 | The desktop app owns its host — Tauri spawns or adopts the Elan host | P1 | L | — | DONE (approved 2026-07-12; worktree `.claude/worktrees/agent-a0dc8de2b90b29366`, 2 commits, merged to main. Caveats: RunEvent::Exit cleanup verified by code review only — canonical Tauri pattern, but Cmd+Q not automatable headlessly; SIGTERM/pkill of the app leaks the host child (signals bypass Exit), mitigated by adopt-on-next-launch — follow-up flagged) |
+| 003 | The desktop app owns its host — Tauri spawns or adopts the Elan host | P1 | L | — | DONE (approved 2026-07-12; worktree `.claude/worktrees/agent-a0dc8de2b90b29366`, 2 commits, merged to main. Caveat: SIGTERM/pkill of the app leaks the host child (signals bypass RunEvent::Exit), mitigated by adopt-on-next-launch — follow-up flagged. RunEvent::Exit graceful-quit cleanup CONFIRMED live 2026-07-12: app quit → host process gone, :4519 refused.) |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (with reason) | REJECTED (with rationale)
 
