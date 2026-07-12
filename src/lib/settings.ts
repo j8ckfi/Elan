@@ -16,53 +16,39 @@ import {
   createElement,
   type ReactNode,
 } from "react";
-import type { ThinkingLevel } from "@/lib/agent/types";
 
 export type ThemePref = "system" | "light" | "dark";
 
 export interface Settings {
   /** Light/dark/system. `system` follows the OS, live. */
   theme: ThemePref;
-  /** Working directory new sessions open in (null → the user's home). */
-  defaultCwd: string | null;
-  /** Model new sessions start on, as `provider/id`. */
-  defaultModel: string;
-  /** Thinking level applied to new sessions (null → leave the model default). */
-  defaultThinking: ThinkingLevel | null;
-  /** Explicit path to the `pi` binary ("" → auto-resolve). */
-  piBinPath: string;
-  /** Extra directories prepended to the spawned pi's PATH, one per line. */
-  extraPathDirs: string;
-  /** How many idle sessions to keep warm before reaping. */
-  warmPoolSize: number;
-  /** Check GitHub Releases for updates on launch. */
-  autoCheckUpdates: boolean;
   /** Frost the sidebar with native macOS glass (desktop app only). */
   glassSidebar: boolean;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
   theme: "system",
-  defaultCwd: null,
-  defaultModel: "openai-codex/gpt-5.5",
-  defaultThinking: null,
-  piBinPath: "",
-  extraPathDirs: "",
-  warmPoolSize: 5,
-  autoCheckUpdates: true,
   glassSidebar: false,
 };
 
 const STORAGE_KEY = "elan.settings";
+
+const THEME_VALUES: ThemePref[] = ["system", "light", "dark"];
 
 function load(): Settings {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return { ...DEFAULT_SETTINGS };
     const parsed = JSON.parse(raw) as Partial<Settings>;
-    // Merge over defaults so a new field added later is filled in, and a
-    // corrupt/partial value can't leave a key undefined.
-    return { ...DEFAULT_SETTINGS, ...parsed };
+    // Pick known keys explicitly so stale persisted keys don't ride along.
+    const theme =
+      parsed.theme && THEME_VALUES.includes(parsed.theme)
+        ? parsed.theme
+        : DEFAULT_SETTINGS.theme;
+    return {
+      theme,
+      glassSidebar: parsed.glassSidebar ?? DEFAULT_SETTINGS.glassSidebar,
+    };
   } catch {
     return { ...DEFAULT_SETTINGS };
   }
@@ -74,14 +60,6 @@ function persist(s: Settings) {
   } catch {
     /* storage disabled — settings just won't survive a restart */
   }
-}
-
-// Parse the newline/colon-separated extra-PATH field into clean dir entries.
-export function parsePathDirs(raw: string): string[] {
-  return raw
-    .split(/[\n:]/)
-    .map((s) => s.trim())
-    .filter(Boolean);
 }
 
 // ── Theme application ──────────────────────────────────────────────────────

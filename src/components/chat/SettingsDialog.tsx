@@ -1,6 +1,6 @@
 // The settings panel. Reads/writes the persisted Settings (see lib/settings).
-// Grouped into General / Models / Pi / Sessions / About. Plain controls, styled
-// to match the app — no heavy pickers, since this is a low-traffic form.
+// Grouped into General / Agents / About. Plain controls, styled to match the
+// app — no heavy pickers, since this is a low-traffic form.
 
 import { type ReactNode } from "react";
 import { IconExternalLink } from "@tabler/icons-react";
@@ -18,15 +18,8 @@ import {
   useSettingsActions,
   type ThemePref,
 } from "@/lib/settings";
-import type { ThinkingLevel } from "@/lib/agent/types";
-import { THINKING_LABELS } from "@/lib/agent/thinking";
 
-const REPO_URL = "https://github.com/j8ckfi/Mari";
-
-const inputCls =
-  "h-8 w-full rounded-[5px] border border-border bg-transparent px-2.5 text-[13px] " +
-  "text-foreground outline-none transition-colors placeholder:text-muted-foreground/60 " +
-  "focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30";
+const REPO_URL = "https://github.com/j8ckfi/Elan";
 
 export function SettingsDialog({
   open,
@@ -74,20 +67,6 @@ export function SettingsDialog({
                 onChange={(v) => update({ glassSidebar: v })}
               />
             </Field>
-            <Field
-              stack
-              label="Default working directory"
-              desc="Where new sessions open. Blank uses your home folder."
-            >
-              <input
-                className={inputCls}
-                placeholder="~/code/project"
-                value={s.defaultCwd ?? ""}
-                onChange={(e) =>
-                  update({ defaultCwd: e.target.value.trim() || null })
-                }
-              />
-            </Field>
           </Section>
 
           {/* ── Agents ──────────────────────────────────────────────── */}
@@ -97,115 +76,17 @@ export function SettingsDialog({
             <RosterEditor variant="settings" />
           </Section>
 
-          {/* ── Models ──────────────────────────────────────────────── */}
-          <Section title="Models">
-            <Field
-              stack
-              label="Default model"
-              desc="Model new sessions start on, as provider/id."
-            >
-              <input
-                className={cn(inputCls, "font-mono text-[12px]")}
-                placeholder="openai-codex/gpt-5.5"
-                value={s.defaultModel}
-                onChange={(e) => update({ defaultModel: e.target.value.trim() })}
-              />
-            </Field>
-            <Field
-              label="Default thinking level"
-              desc="Applied to new sessions when the model supports it."
-            >
-              <select
-                className={cn(inputCls, "cursor-pointer")}
-                value={s.defaultThinking ?? ""}
-                onChange={(e) =>
-                  update({
-                    defaultThinking: (e.target.value || null) as
-                      | ThinkingLevel
-                      | null,
-                  })
-                }
-              >
-                <option value="">Model default</option>
-                {(
-                  ["off", "minimal", "low", "medium", "high", "xhigh"] as const
-                ).map((l) => (
-                  <option key={l} value={l}>
-                    {THINKING_LABELS[l]}
-                  </option>
-                ))}
-              </select>
-            </Field>
-          </Section>
-
-          {/* ── Pi ──────────────────────────────────────────────────── */}
-          <Section title="Pi runtime">
-            <Field
-              stack
-              label="Pi binary path"
-              desc="Override where Mari finds pi. Blank auto-resolves (~/.local/bin, PATH)."
-            >
-              <input
-                className={cn(inputCls, "font-mono text-[12px]")}
-                placeholder="/Users/you/.local/bin/pi"
-                value={s.piBinPath}
-                onChange={(e) => update({ piBinPath: e.target.value.trim() })}
-              />
-            </Field>
-            <Field
-              stack
-              label="Extra PATH directories"
-              desc="Prepended to the spawned pi's PATH — one directory per line. Helps when pi's node runtime lives somewhere unusual."
-            >
-              <textarea
-                className={cn(inputCls, "h-auto min-h-[64px] resize-y py-1.5 font-mono text-[12px]")}
-                placeholder={"/opt/homebrew/bin\n~/.bun/bin"}
-                value={s.extraPathDirs}
-                onChange={(e) => update({ extraPathDirs: e.target.value })}
-              />
-            </Field>
-          </Section>
-
-          {/* ── Sessions ────────────────────────────────────────────── */}
-          <Section title="Sessions">
-            <Field
-              label="Warm session pool"
-              desc="How many idle sessions stay running (fast to reopen) before Mari reaps them. Running sessions are always kept."
-            >
-              <input
-                type="number"
-                min={0}
-                max={20}
-                className={cn(inputCls, "w-24")}
-                value={s.warmPoolSize}
-                onChange={(e) => {
-                  const n = Math.max(0, Math.min(20, Number(e.target.value) || 0));
-                  update({ warmPoolSize: n });
-                }}
-              />
-            </Field>
-          </Section>
-
           {/* ── About ───────────────────────────────────────────────── */}
           <Section title="About">
             <Field
-              label="Automatic updates"
-              desc="Check GitHub Releases for a new version on launch."
-            >
-              <Toggle
-                checked={s.autoCheckUpdates}
-                onChange={(v) => update({ autoCheckUpdates: v })}
-              />
-            </Field>
-            <Field
               label="Updates"
-              desc="Mari updates from signed GitHub Releases."
+              desc="Elan updates from signed GitHub Releases."
             >
               <UpdatesControl />
             </Field>
             <div className="flex items-center justify-between">
               <div className="text-[13px] text-muted-foreground">
-                Mari <span className="tabular-nums">v{__APP_VERSION__}</span>
+                Elan <span className="tabular-nums">v{__APP_VERSION__}</span>
               </div>
               <a
                 href={REPO_URL}
