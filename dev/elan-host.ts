@@ -1970,6 +1970,21 @@ export function startHost(opts: StartHostOptions = {}): ElanHost {
     const path = url.pathname;
 
     if (req.method === "GET" && path === "/api/state") return json(store.getState());
+
+    // Test-only wholesale state replacement (e2e seeding/reset). Gated behind
+    // ELAN_ALLOW_STATE_REPLACE=1 so it is NEVER reachable in a normally
+    // launched host. The body runs through the same normalizeState the boot
+    // path uses; replaceState fires persist + the WS broadcast like any
+    // mutation.
+    if (req.method === "PUT" && path === "/api/state") {
+      if (process.env.ELAN_ALLOW_STATE_REPLACE !== "1")
+        return errRes("state replacement is disabled", 403);
+      const b = await readBody(req);
+      if (!b) return errRes("expected a BoardState JSON body", 400);
+      store.replaceState(normalizeState(b as Partial<BoardState>));
+      return json({ ok: true });
+    }
+
     if (req.method === "GET" && path === "/api/doctor")
       return json(await doctorReport(url.searchParams.get("refresh") === "1"));
 
