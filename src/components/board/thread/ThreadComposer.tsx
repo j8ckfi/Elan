@@ -1,7 +1,6 @@
-// The pinned comment box — sits in the thread pane's bottom dock, Linear's
-// look: 1px border, 6px radius, no glow. Owns the draft, the auto-grow, and
-// the "@" mention popover; reply/resolve mode is lifted to ThreadView so
-// comment blocks can switch it.
+// The thread comment box — quiet card overlaid at the bottom of the feed's
+// content plane. Owns the draft, the auto-grow, and the "@" mention popover;
+// reply/resolve mode is lifted to ThreadView so comment blocks can switch it.
 
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { boardStore } from "@/lib/board/useBoard";

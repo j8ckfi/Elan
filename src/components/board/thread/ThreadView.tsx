@@ -1,7 +1,7 @@
 // The Linear issue view: scrollable content column (title, body, merged
-// activity feed) + composer pinned to the pane bottom + fixed 280px
-// properties rail. Composer reply/resolve mode lives here so comment blocks
-// can flip it.
+// activity feed) with the composer overlaid at the bottom of the same plane
+// + fixed 280px properties rail. Composer reply/resolve mode lives here so
+// comment blocks can flip it.
 
 import { useCallback, useMemo, useState } from "react";
 import { useBoard } from "@/lib/board/useBoard";
@@ -48,9 +48,9 @@ export function ThreadView({ threadId }: { threadId: string }) {
     <div className="flex min-h-0 flex-1 flex-col">
       {/* Content + rail. @container so the rail can yield below ~900px pane width. */}
       <div className="flex min-h-0 flex-1 @container">
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-          <div className="min-h-0 flex-1 overflow-y-auto">
-            <div className="mx-auto w-full max-w-[44rem] px-10 pb-6">
+        <div className="relative min-h-0 min-w-0 flex-1">
+          <div className="absolute inset-0 overflow-y-auto">
+            <div className="mx-auto w-full max-w-[44rem] px-10 pb-28">
               <h1 className="mt-6 text-[21px] font-semibold leading-snug text-foreground">
                 {thread.title}
               </h1>
@@ -77,14 +77,21 @@ export function ThreadView({ threadId }: { threadId: string }) {
             </div>
           </div>
 
-          <div className="shrink-0 border-t border-border bg-background">
-            <div className="mx-auto w-full max-w-[44rem] px-10 py-3">
-              <ThreadComposer
-                threadId={thread.id}
-                roster={board.roster}
-                mode={mode}
-                onModeChange={setMode}
-              />
+          {/* Same plane as the feed: soft fade + the input card, no dock chrome. */}
+          <div className="pointer-events-none absolute inset-x-0 bottom-0">
+            <div
+              aria-hidden
+              className="h-14 bg-gradient-to-b from-transparent via-background/80 to-background"
+            />
+            <div className="bg-background px-10 pb-4">
+              <div className="pointer-events-auto mx-auto w-full max-w-[44rem]">
+                <ThreadComposer
+                  threadId={thread.id}
+                  roster={board.roster}
+                  mode={mode}
+                  onModeChange={setMode}
+                />
+              </div>
             </div>
           </div>
         </div>

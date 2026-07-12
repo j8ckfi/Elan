@@ -115,9 +115,9 @@ export function DraftThread({
   }, [title, body]);
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      <div className="min-h-0 flex-1 overflow-y-auto">
-        <div className="mx-auto w-full max-w-[44rem] px-10 pb-6">
+    <div className="relative min-h-0 flex-1">
+      <div className="absolute inset-0 overflow-y-auto">
+        <div className={cn("mx-auto w-full max-w-[44rem] px-10", thread ? "pb-28" : "pb-16")}>
           {/* Project picker — locked once the thread exists (no moves in v1). */}
           <div className="mt-4">
             {thread ? (
@@ -213,14 +213,20 @@ export function DraftThread({
       </div>
 
       {thread && (
-        <div className="shrink-0 border-t border-border bg-background">
-          <div className="mx-auto w-full max-w-[44rem] px-10 py-3">
-            <ThreadComposer
-              threadId={thread.id}
-              roster={board.roster}
-              mode={mode}
-              onModeChange={setMode}
-            />
+        <div className="pointer-events-none absolute inset-x-0 bottom-0">
+          <div
+            aria-hidden
+            className="h-14 bg-gradient-to-b from-transparent via-background/80 to-background"
+          />
+          <div className="bg-background px-10 pb-4">
+            <div className="pointer-events-auto mx-auto w-full max-w-[44rem]">
+              <ThreadComposer
+                threadId={thread.id}
+                roster={board.roster}
+                mode={mode}
+                onModeChange={setMode}
+              />
+            </div>
           </div>
         </div>
       )}
