@@ -5,6 +5,7 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { boardStore } from "@/lib/board/useBoard";
 import { parseMentions, USER, type Author, type RosterEntry } from "@/lib/board/types";
+import { SendButton } from "@/components/ui/SendButton";
 import { MentionPopover } from "./MentionPopover";
 import { FlagGlyph } from "./glyphlets";
 import { cn } from "@/lib/utils";
@@ -214,18 +215,14 @@ export function ThreadComposer({ threadId, roster, mode, onModeChange }: ThreadC
                   </span>
                 </span>
               )}
-              <button
-                type="button"
-                onClick={submit}
-                disabled={empty}
-                className={cn(
-                  "ml-auto rounded-md bg-primary px-2.5 py-1 text-[12px] font-medium text-primary-foreground",
-                  "transition-[opacity,transform] active:scale-[0.97]",
-                  "disabled:pointer-events-none disabled:opacity-40",
-                )}
-              >
-                Send
-              </button>
+              <div className="ml-auto shrink-0">
+                <SendButton
+                  mode="send"
+                  canSend={!empty}
+                  label="Send"
+                  onClick={submit}
+                />
+              </div>
             </div>
           </div>
         </div>
