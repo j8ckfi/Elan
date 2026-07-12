@@ -360,7 +360,7 @@ const TabsSubtleItem = forwardRef<HTMLButtonElement, TabsSubtleItemProps>(
         className={cn(
           // Fixed heights (was py-2 around a 19.5px line box ≈ 35.5px) so the
           // text-box trim on the label doesn't shrink the tab.
-          "relative z-10 flex items-center px-3 cursor-pointer bg-transparent border-none outline-none",
+          "relative z-10 flex items-center px-3.5 cursor-pointer bg-transparent border-none outline-none",
           collapseLabel ? "h-8" : "h-9 gap-2",
           shape.bg,
           className
@@ -384,7 +384,7 @@ const TabsSubtleItem = forwardRef<HTMLButtonElement, TabsSubtleItemProps>(
                 key="label"
                 className="overflow-hidden"
                 initial={{ width: 0, opacity: 0, marginLeft: 0 }}
-                animate={{ width: "auto", opacity: 1, marginLeft: 8 }}
+                animate={{ width: "auto", opacity: 1, marginLeft: 10 }}
                 exit={{ width: 0, opacity: 0, marginLeft: 0 }}
                 transition={{
                   ...spring.fast,
@@ -393,7 +393,7 @@ const TabsSubtleItem = forwardRef<HTMLButtonElement, TabsSubtleItemProps>(
               >
                 <span className="flex items-center">
                   {labelContent}
-                  {closeAfterLabel && <span className="ml-1.5">{closeGlyph}</span>}
+                  {closeAfterLabel && <span className="ml-2">{closeGlyph}</span>}
                 </span>
               </motion.span>
             )}
@@ -401,7 +401,7 @@ const TabsSubtleItem = forwardRef<HTMLButtonElement, TabsSubtleItemProps>(
         ) : (
           <>
             {labelContent}
-            {closeAfterLabel && <span className="ml-1.5">{closeGlyph}</span>}
+            {closeAfterLabel && <span className="ml-2">{closeGlyph}</span>}
           </>
         )}
       </Tabs.Tab>

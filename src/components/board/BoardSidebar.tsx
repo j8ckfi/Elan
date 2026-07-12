@@ -116,7 +116,7 @@ export function BoardSidebar({
           the traffic-light inset only. */}
       <SidebarHeader className="px-2 pt-9 pb-1" />
 
-      <SidebarContent className="gap-0.5 px-1.5 py-1">
+      <SidebarContent className="gap-0.5 px-2 py-1">
         <NavRow
           icon={IconInbox}
           label="Inbox"
@@ -252,7 +252,7 @@ function ProjectGroup({
   return (
     <div className="py-0.5">
       <div
-        className="group/proj relative flex items-center rounded-[5px] pr-1"
+        className="group/proj relative flex items-center rounded-[5px] pr-1.5"
         onMouseEnter={() => setHovering(true)}
         onMouseLeave={() => setHovering(false)}
       >
@@ -291,7 +291,7 @@ function ProjectGroup({
         </button>
         <div
           className={cn(
-            "absolute right-1 flex items-center gap-0.5 transition-opacity duration-100",
+            "absolute right-1.5 flex items-center gap-1 transition-opacity duration-100",
             showControls ? "opacity-100" : "pointer-events-none opacity-0",
           )}
         >

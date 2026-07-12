@@ -51,7 +51,7 @@ export function ThreadView({ threadId }: { threadId: string }) {
         <div className="relative min-h-0 min-w-0 flex-1">
           <div className="absolute inset-0 overflow-y-auto">
             <div className="mx-auto w-full max-w-[44rem] px-10 pb-28">
-              <h1 className="mt-6 text-[21px] font-semibold leading-[1.15] text-balance text-foreground">
+              <h1 className="mt-6 text-[19px] font-semibold leading-[1.15] text-balance text-foreground">
                 {thread.title}
               </h1>
               {thread.body.trim().length > 0 && (

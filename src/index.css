@@ -343,9 +343,11 @@
 
 /* ── Assistant markdown ──────────────────────────────────────────────────── */
 .mari-md {
-  /* Reading-body size, shared with the user bubble and composer input (14px). */
-  font-size: 14px;
-  line-height: 1.7;
+  /* Reading-body size (13px, matching the board chrome). NOTE: this rule is
+     unlayered, so it outranks Tailwind's layered [&_.mari-md] utilities —
+     this IS the effective body size everywhere. */
+  font-size: 13px;
+  line-height: 1.6;
   color: var(--foreground);
   overflow-wrap: anywhere;
   /* ChatMessage's body sets whitespace-pre-wrap for plain text; markdown needs
