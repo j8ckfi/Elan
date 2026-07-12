@@ -257,7 +257,7 @@ Linear's issue list, 1:1:
     render expanded.
   - **⚑ resolution posts** get a small flag glyph + slightly emphasized
     background tint (`--accent`).
-- **Composer** docked at the bottom of the activity feed (not floating):
+- **Composer** pinned to the bottom of the thread pane (outside the scroll):
   quiet card with "Send a message…" placeholder and a "Send" button, `@`
   triggers the mention popover (roster entries: avatar + handle + harness
   subtitle), Cmd+Enter submits. The look is Linear's comment box: 1px

@@ -1,6 +1,7 @@
-// The Linear issue view, 1:1: scrollable content column (title, body, merged
-// activity feed, docked composer) + fixed 280px properties rail. Composer
-// reply/resolve mode lives here so comment blocks can flip it.
+// The Linear issue view: scrollable content column (title, body, merged
+// activity feed) + composer pinned to the pane bottom + fixed 280px
+// properties rail. Composer reply/resolve mode lives here so comment blocks
+// can flip it.
 
 import { useCallback, useMemo, useState } from "react";
 import { useBoard } from "@/lib/board/useBoard";
@@ -47,30 +48,37 @@ export function ThreadView({ threadId }: { threadId: string }) {
     <div className="flex min-h-0 flex-1 flex-col">
       {/* Content + rail. @container so the rail can yield below ~900px pane width. */}
       <div className="flex min-h-0 flex-1 @container">
-        <div className="min-w-0 flex-1 overflow-y-auto">
-          <div className="mx-auto w-full max-w-[44rem] px-10 pb-16">
-            <h1 className="mt-6 text-[21px] font-semibold leading-snug text-foreground">
-              {thread.title}
-            </h1>
-            {thread.body.trim().length > 0 && (
-              <div className="mt-3 [&_.mari-md]:text-[13px] [&_.mari-md]:leading-[1.6] [&_.mari-md]:text-foreground/85">
-                <Markdown>{emphasizeMentions(thread.body, board.roster)}</Markdown>
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            <div className="mx-auto w-full max-w-[44rem] px-10 pb-6">
+              <h1 className="mt-6 text-[21px] font-semibold leading-snug text-foreground">
+                {thread.title}
+              </h1>
+              {thread.body.trim().length > 0 && (
+                <div className="mt-3 [&_.mari-md]:text-[13px] [&_.mari-md]:leading-[1.6] [&_.mari-md]:text-foreground/85">
+                  <Markdown>{emphasizeMentions(thread.body, board.roster)}</Markdown>
+                </div>
+              )}
+
+              <div className="mt-8 flex items-center gap-3">
+                <h2 className="text-[13px] font-medium text-foreground">Activity</h2>
+                <div className="h-px flex-1 bg-border" aria-hidden />
               </div>
-            )}
 
-            <div className="mt-8 flex items-center gap-3">
-              <h2 className="text-[13px] font-medium text-foreground">Activity</h2>
-              <div className="h-px flex-1 bg-border" aria-hidden />
+              <div className="mt-3">
+                <ActivityFeed
+                  posts={posts}
+                  events={events}
+                  roster={board.roster}
+                  onReply={onReply}
+                  onResolve={onResolve}
+                />
+              </div>
             </div>
+          </div>
 
-            <div className="mt-3">
-              <ActivityFeed
-                posts={posts}
-                events={events}
-                roster={board.roster}
-                onReply={onReply}
-                onResolve={onResolve}
-              />
+          <div className="shrink-0 border-t border-border bg-background">
+            <div className="mx-auto w-full max-w-[44rem] px-10 py-3">
               <ThreadComposer
                 threadId={thread.id}
                 roster={board.roster}

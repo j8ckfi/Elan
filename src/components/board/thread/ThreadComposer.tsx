@@ -1,7 +1,7 @@
-// The docked comment box — last item of the activity feed, Linear's look:
-// 1px border, 6px radius, no glow. Owns the draft, the auto-grow, and the
-// "@" mention popover; reply/resolve mode is lifted to ThreadView so comment
-// blocks can switch it.
+// The pinned comment box — sits in the thread pane's bottom dock, Linear's
+// look: 1px border, 6px radius, no glow. Owns the draft, the auto-grow, and
+// the "@" mention popover; reply/resolve mode is lifted to ThreadView so
+// comment blocks can switch it.
 
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { boardStore } from "@/lib/board/useBoard";
@@ -150,7 +150,7 @@ export function ThreadComposer({ threadId, roster, mode, onModeChange }: ThreadC
   const empty = value.trim().length === 0;
 
   return (
-    <div className="relative mt-4">
+    <div className="relative">
       <MentionPopover
         open={popoverOpen}
         entries={matches}

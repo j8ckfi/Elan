@@ -115,106 +115,115 @@ export function DraftThread({
   }, [title, body]);
 
   return (
-    <div className="flex min-h-0 flex-1 overflow-y-auto">
-      <div className="mx-auto w-full max-w-[44rem] px-10 pb-16">
-        {/* Project picker — locked once the thread exists (no moves in v1). */}
-        <div className="mt-4">
-          {thread ? (
-            <span className="text-[12px] text-muted-foreground">
-              {project?.name} › {project?.key}-{thread.number}
-            </span>
-          ) : (
-            <DropdownMenu>
-              <DropdownTrigger
-                render={
-                  <button
-                    type="button"
-                    className={cn(
-                      "-mx-1.5 rounded-md px-1.5 py-0.5 text-[12px] text-muted-foreground",
-                      "transition-colors hover:bg-hover hover:text-foreground",
-                    )}
-                  />
-                }
-              >
-                {project?.name ?? "Choose project"} ▾
-              </DropdownTrigger>
-              <DropdownContent>
-                {board.projects.map((p, i) => (
-                  <MenuItem
-                    key={p.id}
-                    index={i}
-                    label={p.name}
-                    checked={p.id === selectedProjectId}
-                    onSelect={() => setSelectedProjectId(p.id)}
-                  />
-                ))}
-              </DropdownContent>
-            </DropdownMenu>
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        <div className="mx-auto w-full max-w-[44rem] px-10 pb-6">
+          {/* Project picker — locked once the thread exists (no moves in v1). */}
+          <div className="mt-4">
+            {thread ? (
+              <span className="text-[12px] text-muted-foreground">
+                {project?.name} › {project?.key}-{thread.number}
+              </span>
+            ) : (
+              <DropdownMenu>
+                <DropdownTrigger
+                  render={
+                    <button
+                      type="button"
+                      className={cn(
+                        "-mx-1.5 rounded-md px-1.5 py-0.5 text-[12px] text-muted-foreground",
+                        "transition-colors hover:bg-hover hover:text-foreground",
+                      )}
+                    />
+                  }
+                >
+                  {project?.name ?? "Choose project"} ▾
+                </DropdownTrigger>
+                <DropdownContent>
+                  {board.projects.map((p, i) => (
+                    <MenuItem
+                      key={p.id}
+                      index={i}
+                      label={p.name}
+                      checked={p.id === selectedProjectId}
+                      onSelect={() => setSelectedProjectId(p.id)}
+                    />
+                  ))}
+                </DropdownContent>
+              </DropdownMenu>
+            )}
+          </div>
+
+          <textarea
+            ref={titleRef}
+            rows={1}
+            value={title}
+            onChange={(e) => onTitleChange(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                bodyRef.current?.focus();
+              }
+            }}
+            placeholder="New thread"
+            className={cn(
+              "mt-3 w-full resize-none overflow-hidden bg-transparent outline-none",
+              "text-[21px] font-semibold leading-snug text-foreground",
+              "placeholder:text-muted-foreground/40",
+            )}
+          />
+          <textarea
+            ref={bodyRef}
+            rows={1}
+            value={body}
+            onChange={(e) => onBodyChange(e.target.value)}
+            placeholder="Description…"
+            className={cn(
+              "mt-1 min-h-[60px] w-full resize-none overflow-hidden bg-transparent outline-none",
+              "text-[13px] leading-[1.6] text-foreground/85",
+              "placeholder:text-muted-foreground/40",
+            )}
+          />
+
+          {/* Activity fades in once the thread is real. */}
+          {thread && (
+            <motion.div
+              initial={{ opacity: 0, y: 4 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.25, ease: [0.23, 1, 0.32, 1] }}
+            >
+              <div className="mt-8 flex items-center gap-3">
+                <h2 className="text-[13px] font-medium text-foreground">Activity</h2>
+                <div className="h-px flex-1 bg-border" aria-hidden />
+              </div>
+              <div className="mt-3">
+                <ActivityFeed
+                  posts={posts}
+                  events={events}
+                  roster={board.roster}
+                  onReply={(rootId, author, rootAuthor) =>
+                    setMode({ kind: "reply", rootId, author, rootAuthor })
+                  }
+                  onResolve={(rootId) => setMode({ kind: "resolve", rootId })}
+                />
+              </div>
+            </motion.div>
           )}
         </div>
-
-        <textarea
-          ref={titleRef}
-          rows={1}
-          value={title}
-          onChange={(e) => onTitleChange(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") {
-              e.preventDefault();
-              bodyRef.current?.focus();
-            }
-          }}
-          placeholder="New thread"
-          className={cn(
-            "mt-3 w-full resize-none overflow-hidden bg-transparent outline-none",
-            "text-[21px] font-semibold leading-snug text-foreground",
-            "placeholder:text-muted-foreground/40",
-          )}
-        />
-        <textarea
-          ref={bodyRef}
-          rows={1}
-          value={body}
-          onChange={(e) => onBodyChange(e.target.value)}
-          placeholder="Description…"
-          className={cn(
-            "mt-1 min-h-[60px] w-full resize-none overflow-hidden bg-transparent outline-none",
-            "text-[13px] leading-[1.6] text-foreground/85",
-            "placeholder:text-muted-foreground/40",
-          )}
-        />
-
-        {/* Activity fades in once the thread is real. */}
-        {thread && (
-          <motion.div
-            initial={{ opacity: 0, y: 4 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.25, ease: [0.23, 1, 0.32, 1] }}
-          >
-            <div className="mt-8 flex items-center gap-3">
-              <h2 className="text-[13px] font-medium text-foreground">Activity</h2>
-              <div className="h-px flex-1 bg-border" aria-hidden />
-            </div>
-            <div className="mt-3">
-              <ActivityFeed
-                posts={posts}
-                events={events}
-                roster={board.roster}
-                onReply={(rootId, author, rootAuthor) =>
-                  setMode({ kind: "reply", rootId, author, rootAuthor })
-                }
-                onResolve={(rootId) => setMode({ kind: "resolve", rootId })}
-              />
-              <ThreadComposer
-                threadId={thread.id}
-                roster={board.roster}
-                mode={mode}
-                onModeChange={setMode}
-              />
-            </div>
-          </motion.div>
-        )}
       </div>
+
+      {thread && (
+        <div className="shrink-0 border-t border-border bg-background">
+          <div className="mx-auto w-full max-w-[44rem] px-10 py-3">
+            <ThreadComposer
+              threadId={thread.id}
+              roster={board.roster}
+              mode={mode}
+              onModeChange={setMode}
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }
