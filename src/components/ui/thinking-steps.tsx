@@ -58,7 +58,7 @@ const TriggerRow = forwardRef<HTMLButtonElement, TriggerRowProps>(
         onMouseEnter={() => setIsHovered(true)}
         onMouseLeave={() => setIsHovered(false)}
       >
-        <AnimatePresence>
+        <AnimatePresence initial={false}>
           {isHovered && (
             <motion.div
               // Rectangular hover, tight to the label — matches FF's agent trace
@@ -75,7 +75,7 @@ const TriggerRow = forwardRef<HTMLButtonElement, TriggerRowProps>(
           ref={ref}
           className={cn(
             "relative z-10 flex items-center gap-2 rounded-md px-2 py-1 cursor-pointer outline-none select-none",
-            "focus-visible:ring-1 focus-visible:ring-[color:var(--focus-ring,#6B97FF)] focus-visible:ring-offset-0",
+            "focus-visible:ring-1 focus-visible:ring-[color:var(--focus-ring)] focus-visible:ring-offset-0",
             className
           )}
           {...(props as React.ButtonHTMLAttributes<HTMLButtonElement>)}

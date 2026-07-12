@@ -856,7 +856,7 @@ const AskUserQuestions = forwardRef<HTMLDivElement, AskUserQuestionsProps>(
             text exists, the row joins selectedIndices and inherits the
             selected merged bg, so it visually integrates with adjacent
             selected options instead of looking like a standalone field. */}
-        <AnimatePresence>
+        <AnimatePresence initial={false}>
           {(() => {
             if (!allowOther) return null;
             const otherRect = itemRects[otherIndex];
@@ -897,7 +897,7 @@ const AskUserQuestions = forwardRef<HTMLDivElement, AskUserQuestionsProps>(
 
         {/* Single morphing hover indicator (rendered below selected bg
             so a hovered+selected row still reads as clearly selected) */}
-        <AnimatePresence>
+        <AnimatePresence initial={false}>
           {activeRect && (
             <motion.div
               key={`hover-${sessionRef.current}`}
@@ -943,12 +943,12 @@ const AskUserQuestions = forwardRef<HTMLDivElement, AskUserQuestionsProps>(
 
         {/* Single morphing focus ring — fed by the container onFocus above,
             so keyboard focus on any option row draws it. */}
-        <AnimatePresence>
+        <AnimatePresence initial={false}>
           {focusRect && (
             <motion.div
               aria-hidden
               className={cn(
-                "absolute pointer-events-none border border-[color:var(--focus-ring,#6B97FF)] z-20",
+                "absolute pointer-events-none border border-[color:var(--focus-ring)] z-20",
                 shape.focusRing
               )}
               initial={{
@@ -1646,7 +1646,7 @@ function Row({
   // in — pull it out so the chip-on-right (overlay) and chip-on-left
   // (separate right slot) paths can reuse the exact same element.
   const arrowOverlay = (
-    <AnimatePresence>
+    <AnimatePresence initial={false}>
       {showArrow && (
         <motion.span
           aria-hidden={!onArrowClick}

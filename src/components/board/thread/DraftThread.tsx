@@ -168,7 +168,7 @@ export function DraftThread({
             placeholder="New thread"
             className={cn(
               "mt-3 w-full resize-none overflow-hidden bg-transparent outline-none",
-              "text-[21px] font-semibold leading-snug text-foreground",
+              "text-[21px] font-semibold leading-[1.15] text-balance text-foreground",
               "placeholder:text-muted-foreground/40",
             )}
           />
@@ -180,7 +180,7 @@ export function DraftThread({
             placeholder="Description…"
             className={cn(
               "mt-1 min-h-[60px] w-full resize-none overflow-hidden bg-transparent outline-none",
-              "text-[13px] leading-[1.6] text-foreground/85",
+              "text-[13px] leading-[1.6] text-pretty text-foreground/85",
               "placeholder:text-muted-foreground/40",
             )}
           />

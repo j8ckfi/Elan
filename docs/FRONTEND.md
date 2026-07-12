@@ -16,7 +16,7 @@ Linear render this?", not invention.
   --muted-foreground/--surface-*/--shadow-*`, light+dark via `.dark`. Never
   hard-code colors; extend the token block if a token is missing.
 - **Motion**: `--ease-out: cubic-bezier(0.23,1,0.32,1)`, durations < 300ms,
-  `:active` scale ~0.97 on pressables, origin-aware popovers, no `scale(0)`
+  `:active` scale `0.96` on pressables, origin-aware popovers, no `scale(0)`
   entrances, no `transition: all`. Hidden interactive elements are also
   non-interactive (`pointer-events-none`, `tabIndex={-1}`, `aria-hidden`).
 - **Radius**: `--radius: 6px` cascading to `rounded-*`; "properly square."

@@ -165,7 +165,7 @@ const triggerVariants = cva(
     "text-[13px] h-9 px-3 min-w-[160px]",
     "transition-[background-color,border-color,color] duration-80",
     "disabled:opacity-50 disabled:pointer-events-none",
-    "focus-visible:ring-1 focus-visible:ring-[color:var(--focus-ring,#6B97FF)]",
+    "focus-visible:ring-1 focus-visible:ring-[color:var(--focus-ring)]",
   ],
   {
     variants: {
@@ -409,7 +409,7 @@ const SelectContent = forwardRef<HTMLDivElement, SelectContentProps>(
                 )}
               >
                 {/* Selected background */}
-                <AnimatePresence>
+                <AnimatePresence initial={false}>
                   {checkedRect && (
                     <motion.div
                       className={`absolute ${shape.bg} bg-active pointer-events-none`}
@@ -431,7 +431,7 @@ const SelectContent = forwardRef<HTMLDivElement, SelectContentProps>(
                 </AnimatePresence>
 
                 {/* Hover background */}
-                <AnimatePresence>
+                <AnimatePresence initial={false}>
                   {activeRect && (
                     <motion.div
                       key={sessionRef.current}
@@ -460,10 +460,10 @@ const SelectContent = forwardRef<HTMLDivElement, SelectContentProps>(
                 </AnimatePresence>
 
                 {/* Focus ring */}
-                <AnimatePresence>
+                <AnimatePresence initial={false}>
                   {focusRect && (
                     <motion.div
-                      className={`absolute ${shape.focusRing} pointer-events-none z-20 border border-[color:var(--focus-ring,#6B97FF)]`}
+                      className={`absolute ${shape.focusRing} pointer-events-none z-20 border border-[color:var(--focus-ring)]`}
                       initial={false}
                       animate={{
                         left: focusRect.left - 2,
@@ -585,7 +585,7 @@ const SelectItem = forwardRef<HTMLDivElement, SelectItemProps>(
           {children}
         </SelectPrimitive.ItemText>
 
-        <AnimatePresence>
+        <AnimatePresence initial={false}>
           {isChecked && (
             <motion.svg
               key="check"

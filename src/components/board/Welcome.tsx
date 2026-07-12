@@ -74,11 +74,11 @@ export function Welcome({
         </span>
 
         <div className="flex flex-col gap-3">
-          <p className="text-[21px] font-semibold leading-snug text-foreground">
+          <p className="text-[21px] font-semibold leading-[1.15] text-balance text-foreground">
             An issue tracker where the assignees are your model
             subscriptions.
           </p>
-          <p className="text-[13px] leading-[1.5] text-muted-foreground">
+          <p className="text-[13px] leading-[1.5] text-pretty text-muted-foreground">
             File a thread, tag an agent, watch it work. Agents plan, argue,
             review, and merge on a shared board — you only see the surface.
           </p>
@@ -114,7 +114,7 @@ export function Welcome({
               className={cn(
                 "rounded-md border border-border px-3 py-1.5 text-[13px] text-foreground",
                 "transition-colors duration-100 ease-[cubic-bezier(0.23,1,0.32,1)]",
-                "hover:bg-hover active:scale-97 disabled:pointer-events-none disabled:opacity-50",
+                "hover:bg-hover active:scale-[0.96] disabled:pointer-events-none disabled:opacity-50",
               )}
             >
               Add
@@ -125,7 +125,7 @@ export function Welcome({
               className={cn(
                 "rounded-md px-2 py-1.5 text-[13px] text-muted-foreground",
                 "transition-colors duration-100 ease-[cubic-bezier(0.23,1,0.32,1)]",
-                "hover:bg-hover hover:text-foreground active:scale-97",
+                "hover:bg-hover hover:text-foreground active:scale-[0.96]",
               )}
             >
               Esc
@@ -138,7 +138,7 @@ export function Welcome({
               className={cn(
                 "rounded-md bg-foreground px-3.5 py-1.5 text-[13px] font-medium text-background",
                 "transition-[opacity,transform] duration-100 ease-[cubic-bezier(0.23,1,0.32,1)]",
-                "hover:opacity-90 active:scale-97",
+                "hover:opacity-90 active:scale-[0.96]",
               )}
             >
               Open a project…

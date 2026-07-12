@@ -180,7 +180,7 @@ const TabsSubtle = forwardRef<HTMLDivElement, TabsSubtleProps>(
               )}
 
               {/* Hover pill */}
-              <AnimatePresence>
+              <AnimatePresence initial={false}>
                 {hoverRect && !isHoveringSelected && selectedRect && (
                   <motion.div
                     className={cn("absolute bg-active pointer-events-none", shape.bg)}
@@ -219,10 +219,10 @@ const TabsSubtle = forwardRef<HTMLDivElement, TabsSubtleProps>(
               </AnimatePresence>
 
               {/* Focus ring */}
-              <AnimatePresence>
+              <AnimatePresence initial={false}>
                 {focusRect && (
                   <motion.div
-                    className={cn("absolute pointer-events-none z-20 border border-[color:var(--focus-ring,#6B97FF)]", shape.focusRing)}
+                    className={cn("absolute pointer-events-none z-20 border border-[color:var(--focus-ring)]", shape.focusRing)}
                     initial={false}
                     animate={{
                       left: focusRect.left - 2,

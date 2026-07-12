@@ -191,7 +191,7 @@ const MenuItem = forwardRef<HTMLDivElement, MenuItemProps>(
             {label}
           </span>
         </span>
-        <AnimatePresence>
+        <AnimatePresence initial={false}>
           {checked && (
             <motion.svg
               key="check"

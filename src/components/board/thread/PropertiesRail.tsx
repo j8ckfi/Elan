@@ -65,7 +65,7 @@ export function PropertiesRail({ thread, project, roster, sessions }: Properties
           </Row>
         )}
 
-        <div className="mt-2.5 text-[12px] text-muted-foreground">
+        <div className="mt-2.5 text-[12px] tabular-nums text-muted-foreground">
           Created {relativeTime(thread.createdAt)} · Updated {relativeTime(thread.updatedAt)}
         </div>
       </div>

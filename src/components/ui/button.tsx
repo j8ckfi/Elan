@@ -19,7 +19,7 @@ const buttonVariants = cva(
     "group relative isolate inline-flex items-center justify-center outline-none cursor-pointer",
     "transition-colors duration-80",
     "disabled:opacity-50 disabled:pointer-events-none",
-    "focus-visible:ring-1 focus-visible:ring-[color:var(--focus-ring,#6B97FF)]",
+    "focus-visible:ring-1 focus-visible:ring-[color:var(--focus-ring)]",
   ],
   {
     variants: {

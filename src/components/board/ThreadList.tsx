@@ -73,7 +73,7 @@ export function ThreadList({ mode, projectId, onOpenThread, onNewThread }: Threa
           className={cn(
             "rounded-md border border-border px-2.5 py-1 text-[13px] text-foreground/80",
             "transition-colors duration-100 ease-[cubic-bezier(0.23,1,0.32,1)]",
-            "hover:bg-hover hover:text-foreground active:scale-97",
+            "hover:bg-hover hover:text-foreground active:scale-[0.96]",
           )}
         >
           New thread
@@ -89,7 +89,7 @@ export function ThreadList({ mode, projectId, onOpenThread, onNewThread }: Threa
               className={cn(
                 "rounded-md border border-border px-3 py-1.5 text-foreground",
                 "transition-colors duration-100 ease-[cubic-bezier(0.23,1,0.32,1)]",
-                "hover:bg-hover active:scale-97",
+                "hover:bg-hover active:scale-[0.96]",
               )}
             >
               New thread

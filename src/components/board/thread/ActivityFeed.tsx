@@ -193,7 +193,7 @@ function QuietLine({ actors, at }: { actors: string[]; at: number }) {
       <span aria-hidden className="w-3.5 text-center">✓</span>
       <span className="min-w-0 truncate">
         <span className="text-muted-foreground">{names}</span> caught up — nothing needed
-        <span> · {relativeTime(at)}</span>
+        <span> · <span className="tabular-nums">{relativeTime(at)}</span></span>
       </span>
     </div>
   );
@@ -210,7 +210,7 @@ function EventLine({ event, roster }: { event: BoardEvent; roster: RosterEntry[]
       <div className="flex h-7 min-w-0 items-center text-[12.5px] text-muted-foreground">
         <span className="min-w-0 truncate first-letter:uppercase">
           {describe(event)}
-          <span> · {relativeTime(event.at)}</span>
+          <span> · <span className="tabular-nums">{relativeTime(event.at)}</span></span>
         </span>
       </div>
     );
@@ -222,7 +222,7 @@ function EventLine({ event, roster }: { event: BoardEvent; roster: RosterEntry[]
       <span className="min-w-0 truncate">
         <span className="font-medium text-foreground/90">{event.actor}</span>{" "}
         {describe(event)}
-        <span> · {relativeTime(event.at)}</span>
+        <span> · <span className="tabular-nums">{relativeTime(event.at)}</span></span>
       </span>
     </div>
   );
