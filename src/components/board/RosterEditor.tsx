@@ -3,7 +3,8 @@
 // first-project onboarding step (variant "onboarding", "Assemble your
 // team"). Built on doctor v2 (src/lib/board/doctor.ts) + setRoster — the
 // store is optimistic and host-synced, so every commit saves the full list.
-// Local mode swaps the detection list for a connect-a-host note.
+// The board is always host-backed, so detection always has a host to probe
+// (an unreachable one surfaces as the doctor's error state).
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
@@ -96,7 +97,7 @@ export function RosterEditor({
   const doctor = useDoctor();
 
   // Detection just happens on open; reopen re-probes (?refresh=1). No Scan
-  // button anywhere. No-op in local mode.
+  // button anywhere.
   useEffect(() => {
     openDoctor();
   }, []);
@@ -149,15 +150,11 @@ export function RosterEditor({
     <section className="flex flex-col gap-1">
       <h4 className="flex items-center gap-2 text-[12px] font-medium text-muted-foreground select-none">
         Available on this machine
-        {doctor?.status === "probing" && doctor.rows.length === 0 && (
+        {doctor.status === "probing" && doctor.rows.length === 0 && (
           <span className="shimmer-text text-[12px] font-normal">Detecting…</span>
         )}
       </h4>
-      {doctor == null ? (
-        <p className="py-1.5 text-[12px] text-muted-foreground">
-          Connect a host to detect CLIs and models.
-        </p>
-      ) : doctor.status === "error" ? (
+      {doctor.status === "error" ? (
         <p className="flex items-center gap-2 py-1.5 text-[12px] text-muted-foreground">
           Couldn't reach the host's doctor.
           <button
@@ -201,9 +198,7 @@ export function RosterEditor({
             Assemble your team
           </h2>
           <p className="text-[13px] leading-[1.5] text-muted-foreground">
-            {doctor == null
-              ? "Pick the agents you want on the board."
-              : "These CLIs are on your machine. Pick the models you want on the board."}
+            These CLIs are on your machine. Pick the models you want on the board.
           </p>
         </header>
 
