@@ -33,14 +33,14 @@ parity is build-order step 5). The host:
 - **Runs the orchestrator** (below) as a store subscriber: every mutation is
   scanned for `tagged` events to spawn on and for armed `wakeOn` matches.
 
-The UI picks its store at boot: `VITE_ELAN_HOST` env or `?host=1` URL param
-→ host client (`src/lib/board/host-store.ts`, HTTP mutations + WS
-subscription); otherwise the localStorage store (browser-only demo mode —
-tagging records events but nothing spawns). Dev loop with the full stack:
+The UI always connects to a host (local mode is gone, 2026-07-12): the host
+URL resolves as `VITE_ELAN_HOST` env > `?host=<url>` URL param > the default
+`127.0.0.1:4519`, and the UI talks to it through the host client
+(`src/lib/board/host-store.ts`, HTTP mutations + WS subscription). Dev loop:
 
 ```sh
-bun dev/elan-host.ts     # the host (:4519)
-bun run dev              # Vite (:1420) → open /?host=1
+bun dev/elan-host.ts     # the host (:4519)  — or: bun run host
+bun run dev              # Vite (:1420), which defaults to the host above
 ```
 
 ## The two channels

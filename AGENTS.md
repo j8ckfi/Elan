@@ -50,13 +50,15 @@ dives live in `docs/`:
 
 ## Dev loops
 
-- **UI-only work:** `bun run dev` (Vite :1420) + `bun dev/pi-bridge.ts`
-  (WS bridge :4317, spawns one CLI child per session). Fast, no Rust rebuild.
-  `.claude/launch.json` has an `elan-preview` config (port 5199) for the
-  Claude Preview MCP.
-- **No backend at all:** open `/?agent=mock` — the mock adapter streams a
-  scripted response with zero external dependencies. Ideal for pure UI work
-  and what the e2e suite drives.
+- **UI-only work:** `bun run dev` (Vite :1420) + `bun dev/elan-host.ts` (or
+  `bun run host`) — the board is always host-backed, so the host must be up.
+  Add `bun dev/pi-bridge.ts` (WS bridge :4317, one CLI child per session) for
+  chat-session work. Fast, no Rust rebuild. `.claude/launch.json` has an
+  `elan-preview` config (port 5199) for the Claude Preview MCP.
+- **No agent CLIs:** open `/?agent=mock` — the mock **chat adapter** streams a
+  scripted response with zero external dependencies, for chat-session UI work.
+  Note the **board** still needs a host; the e2e suite boots a real host with
+  an all-`mock` roster (see `playwright.config.ts`).
 - **Adapter selection in dev:** `?agent=pi|mock|claude-code` URL param or
   `VITE_AGENT=…` env (see `src/config.ts`). Forks change the default import.
 - **Anything touching Rust (`src-tauri/`):** `bun run tauri dev`, or
