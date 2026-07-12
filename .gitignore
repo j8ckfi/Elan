@@ -27,3 +27,6 @@ dist-ssr
 test-results
 playwright-report
 .elan/
+
+# Bundled host sidecar (built by `bun run build:host`)
+src-tauri/binaries/
