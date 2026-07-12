@@ -1,30 +1,81 @@
-// End-to-end: the board UI in a real browser against the local (localStorage)
-// store — no host, no agent CLI, no credentials. The demo is gone from the
-// product (docs/DATA-MODEL.md: "There is no demo board in the product" —
-// removed 2026-07-10), so tests that need pre-existing data build their own
-// fixture by writing `elan.board.v3` directly before the app boots
-// (seedFixture below), the same way a real user's board would already have
-// history. Pure product-path tests (first run, project creation, the draft
-// flow, delete-project) stay fixture-free — they start from an empty board
-// exactly like a fresh install.
+// End-to-end: the board UI in a real browser against a real Elan host (the
+// board is always host-backed now — local mode is gone, 2026-07-12). The host
+// runs with ELAN_ALLOW_STATE_REPLACE=1 so the suite can seed/reset the board
+// over PUT /api/state; the UI is pointed at it via VITE_ELAN_HOST
+// (playwright.config.ts). No agent CLI or credentials: every rostered harness
+// in the fixture is `mock`, so tagging drives the credential-free mock agent.
+// Detection is stubbed via window.__ELAN_DOCTOR_FIXTURE__ (set in beforeEach)
+// so the roster editor never probes real CLIs on the machine.
+// The demo is gone from the product (docs/DATA-MODEL.md: "There is no demo
+// board in the product"), so tests that need pre-existing data seed their own
+// fixture (seedFixture below). Pure product-path tests (first run, project
+// creation, the draft flow, delete-project) start from an empty board.
 // The assertions come straight from docs/FRONTEND.md: First run, the tab row,
 // the draft page, the thread view. Orchestration is covered elsewhere.
 
+import { mkdirSync } from "node:fs";
 import { expect, test, type Page } from "@playwright/test";
 
+const HOST_URL = "http://127.0.0.1:4529";
+
+// The fixture's repoPaths must EXIST: when a project's repoPath is missing,
+// the host falls back to spawning agents in its own cwd — the source tree —
+// and the mock agent would drop its artifacts (mock-plan.md) into the repo.
+// Plain dirs are enough (not git repos): the host uses them as the session
+// cwd directly, no worktree.
+test.beforeAll(() => {
+  for (const dir of ["/tmp/e2e-engram", "/tmp/e2e-nimbus"])
+    mkdirSync(dir, { recursive: true });
+});
+// A fresh install: no projects/threads, but the default roster (a real host
+// boots emptyState() with these). Harnesses are forced to `mock` so nothing
+// can spawn a real CLI even if a test were to tag from this state.
+const EMPTY_BOARD = {
+  projects: [],
+  threads: [],
+  roster: [
+    { handle: "fable-5", harness: "mock", color: "#7c6df2" },
+    { handle: "gpt-5.6", harness: "mock", color: "#0f9d8f" },
+    { handle: "grok-4.5", harness: "mock", color: "#d97706" },
+    { handle: "demo-bot", harness: "mock", color: "#8b8d98" },
+  ],
+};
+
+// A deterministic doctor stub — the roster editor renders these rows instead
+// of probing the machine's real CLIs (which would be slow and flaky in CI).
+const DOCTOR_FIXTURE = {
+  harnesses: {
+    "claude-code": {
+      bin: "claude",
+      found: true,
+      version: "2.1.0",
+      auth: "signed in",
+      models: ["claude-fable-5"],
+    },
+  },
+  staggerMs: 0,
+  initialDelayMs: 0,
+};
+
 // ── Isolation ─────────────────────────────────────────────────────────────
-// Each test gets a fresh context, but clear storage anyway so a reused
-// profile can't leak a board in. sessionStorage-guarded: addInitScript reruns
-// on every navigation, and the tab-restore test reloads mid-test — the guard
-// keeps that reload from wiping elan.board.v3 / elan.tabs.v1.
+// Board state lives on the shared host, so each test resets it to empty over
+// PUT /api/state. Tab/onboarding state still lives in localStorage — clear it
+// too. sessionStorage-guarded: addInitScript reruns on every navigation, and
+// the tab-restore test reloads mid-test — the guard keeps that reload from
+// wiping elan.tabs.v1. The doctor fixture is (re)installed on every
+// navigation so mid-test reloads keep deterministic detection.
 test.beforeEach(async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 800 });
+  await page.request.put(`${HOST_URL}/api/state`, { data: EMPTY_BOARD });
   await page.addInitScript(() => {
     if (!sessionStorage.getItem("__e2e_cleared")) {
       localStorage.clear();
       sessionStorage.setItem("__e2e_cleared", "1");
     }
   });
+  await page.addInitScript((fx) => {
+    (window as unknown as { __ELAN_DOCTOR_FIXTURE__: unknown }).__ELAN_DOCTOR_FIXTURE__ = fx;
+  }, DOCTOR_FIXTURE);
   await page.goto("/");
 });
 
@@ -64,10 +115,13 @@ function buildFixture() {
         createdAt: ago(28 * HOUR),
       },
     ],
+    // Against a real host, tagging SPAWNS the rostered harness — so every
+    // entry is `mock` (a credential-free local process), never a real CLI.
+    // The handles keep their real-looking names; only the harness is mock.
     roster: [
-      { handle: "fable-5", harness: "claude-code", color: "#7c6df2" },
-      { handle: "gpt-5.6", harness: "codex", color: "#0f9d8f" },
-      { handle: "grok-4.5", harness: "grok", color: "#d97706" },
+      { handle: "fable-5", harness: "mock", color: "#7c6df2" },
+      { handle: "gpt-5.6", harness: "mock", color: "#0f9d8f" },
+      { handle: "grok-4.5", harness: "mock", color: "#d97706" },
       { handle: "demo-bot", harness: "mock", color: "#8b8d98" },
     ],
     threads: [
@@ -157,15 +211,11 @@ function buildFixture() {
   };
 }
 
-/** Writes the fixture to `elan.board.v3` via addInitScript (so it's present
- *  before the app's first render, not raced in after) and reloads to pick it
- *  up. The init script re-fires on any later reload within the same test
- *  too — harmless, since it just re-asserts the same fixture. */
+/** Seeds the fixture onto the host over PUT /api/state, then reloads so the
+ *  UI picks it up from the host's full-state push, and waits for the flagship
+ *  thread to render. */
 async function seedFixture(page: Page) {
-  const state = buildFixture();
-  await page.addInitScript((s) => {
-    localStorage.setItem("elan.board.v3", JSON.stringify(s));
-  }, state);
+  await page.request.put(`${HOST_URL}/api/state`, { data: buildFixture() });
   await page.reload();
   await expect(page.getByText(FLAGSHIP)).toBeVisible();
 }
@@ -231,10 +281,12 @@ test("Open a project… creates a project via the inline path input", async ({ p
   await page.getByRole("button", { name: "Add", exact: true }).click();
 
   // The first project lands on onboarding step 2 first — "Assemble your
-  // team" (docs/FRONTEND.md): the default roster as editable rows and, in
-  // local mode, the connect-a-host note in place of the detection list.
+  // team" (docs/FRONTEND.md): the default roster as editable rows and the
+  // host-backed detection list. The doctor fixture (beforeEach) resolves a
+  // deterministic Claude Code row under "Available on this machine".
   await expect(page.getByRole("heading", { name: "Assemble your team" })).toBeVisible();
-  await expect(page.getByText("Connect a host to detect CLIs and models.")).toBeVisible();
+  await expect(page.getByText("Available on this machine")).toBeVisible();
+  await expect(page.getByText("Claude Code").first()).toBeVisible();
   await expect(page.getByLabel("Agent handle").first()).toHaveValue("fable-5");
   await page.getByRole("button", { name: "Start working" }).click();
 

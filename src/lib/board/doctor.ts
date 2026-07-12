@@ -1,10 +1,9 @@
 // The doctor client: fetch + cache for GET /api/doctor (doctor v2 — see
 // docs/ORCHESTRATION.md "The harness registry"), read through useDoctor().
 // Module-level singleton like host-store's status: there is one host, one
-// doctor report, and any number of readers (Settings, onboarding).
-//
-// Local mode (no host) has nothing to probe — useDoctor() returns null and
-// the roster editor renders its connect-a-host note instead of detection.
+// doctor report, and any number of readers (Settings, onboarding). The board
+// is always host-backed (local mode is gone, 2026-07-12), so useDoctor()
+// always has a host — or a fixture — to probe.
 //
 // The wire shape is the doc's, not the host's current code: per harness
 // {bin, found, path?, version?, auth?, models: string[] | null,
@@ -52,13 +51,14 @@ export interface DoctorSnapshot {
 
 const DEFAULT_HOST_URL = "http://127.0.0.1:4519";
 
-function resolveHostUrl(): string | null {
+function resolveHostUrl(): string {
   const envHost = import.meta.env.VITE_ELAN_HOST;
   if (envHost) return envHost;
-  if (typeof window === "undefined") return null;
-  const param = new URLSearchParams(window.location.search).get("host");
-  if (param == null) return null;
-  return param === "1" || param === "" ? DEFAULT_HOST_URL : param;
+  if (typeof window !== "undefined") {
+    const param = new URLSearchParams(window.location.search).get("host");
+    if (param != null) return param === "1" || param === "" ? DEFAULT_HOST_URL : param;
+  }
+  return DEFAULT_HOST_URL;
 }
 
 // ── Dev-only fixture escape hatch ──────────────────────────────────────────
@@ -214,7 +214,6 @@ export function openDoctor(): void {
     loadFixture(fx);
     return;
   }
-  if (hostUrl == null) return;
   void load(loadedOnce);
   loadedOnce = true;
 }
@@ -226,20 +225,12 @@ export function refreshDoctor(): void {
     loadFixture(fx);
     return;
   }
-  if (hostUrl == null) return;
   void load(true);
   loadedOnce = true;
 }
 
-const noopSubscribe = () => () => {};
-const nullSnapshot = () => null;
-
-/** The doctor report, or null in local mode (no host, no fixture) — the
- *  roster editor swaps detection for its connect-a-host note on null. */
-export function useDoctor(): DoctorSnapshot | null {
-  const available = hostUrl != null || fixture() != null;
-  return useSyncExternalStore(
-    available ? subscribe : noopSubscribe,
-    available ? getSnapshot : nullSnapshot,
-  );
+/** The doctor report. There is always a host (or a dev fixture) to probe, so
+ *  this never returns null — an unreachable host surfaces as status:"error". */
+export function useDoctor(): DoctorSnapshot {
+  return useSyncExternalStore(subscribe, getSnapshot);
 }

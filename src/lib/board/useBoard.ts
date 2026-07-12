@@ -2,10 +2,9 @@
 // Mutations go straight through boardStore(); reads go through useBoard()
 // (useSyncExternalStore keeps every subscriber in lockstep, no context).
 //
-// Store selection happens once, at module load: an Elan host present via
-// build-time env or a URL param wins; otherwise it's the browser-only
-// localStorage store (docs/ORCHESTRATION.md, "The UI picks its store at
-// boot").
+// The board is always host-backed (local mode is gone, 2026-07-12): the host
+// URL resolves at module load — build-time env or a URL param overrides, else
+// the default (docs/ORCHESTRATION.md, "The UI always connects to a host").
 
 import {
   useCallback,
@@ -16,15 +15,17 @@ import {
 } from "react";
 import type { ChatItem } from "@/lib/agent/types";
 import {
+  boardLoaded,
   bufferedSessionLines,
   createHostStore,
   hostBaseUrl,
   hostStatus,
+  subscribeBoardLoaded,
   subscribeHostStatus,
   subscribeSessionLines,
   type HostStatus,
 } from "./host-store";
-import { createLocalStore, type BoardStore } from "./store";
+import type { BoardStore } from "./store";
 import {
   createFold,
   foldSessionLines,
@@ -37,14 +38,16 @@ import type { AgentSessionRecord, BoardState, SessionState } from "./types";
 const DEFAULT_HOST_URL = "http://127.0.0.1:4519";
 
 // `VITE_ELAN_HOST` (build-time env) wins; else `?host=1` (default host URL)
-// or `?host=http://…` (explicit URL); else no host — browser-only mode.
-function resolveHostUrl(): string | null {
+// or `?host=http://…` (explicit URL) overrides for dev; else the default —
+// there is always a host.
+function resolveHostUrl(): string {
   const envHost = import.meta.env.VITE_ELAN_HOST;
   if (envHost) return envHost;
-  if (typeof window === "undefined") return null;
-  const param = new URLSearchParams(window.location.search).get("host");
-  if (param == null) return null;
-  return param === "1" || param === "" ? DEFAULT_HOST_URL : param;
+  if (typeof window !== "undefined") {
+    const param = new URLSearchParams(window.location.search).get("host");
+    if (param != null) return param === "1" || param === "" ? DEFAULT_HOST_URL : param;
+  }
+  return DEFAULT_HOST_URL;
 }
 
 const hostUrl = resolveHostUrl();
@@ -52,7 +55,7 @@ const hostUrl = resolveHostUrl();
 let singleton: BoardStore | null = null;
 
 function getStore(): BoardStore {
-  if (!singleton) singleton = hostUrl ? createHostStore(hostUrl) : createLocalStore();
+  if (!singleton) singleton = createHostStore(hostUrl);
   return singleton;
 }
 
@@ -60,26 +63,24 @@ export function boardStore(): BoardStore {
   return getStore();
 }
 
-export function boardMode(): "local" | "host" {
-  return hostUrl ? "host" : "local";
-}
-
 export function useBoard(): BoardState {
   const store = getStore();
   return useSyncExternalStore(store.subscribe, store.getState);
 }
 
-// Local mode has no host, hence no connection to report — null, not a fake
-// "connected". Host mode reads host-store's module-level status (it isn't
-// part of the BoardStore contract; only the host client tracks a socket).
-const noopSubscribeHostStatus = () => () => {};
-const nullHostStatus = () => null;
+// The connection status the ConnectionBanner surfaces. Reads host-store's
+// module-level status (it isn't part of the BoardStore contract; only the
+// host client tracks a socket).
+export function useHostStatus(): HostStatus {
+  return useSyncExternalStore(subscribeHostStatus, hostStatus);
+}
 
-export function useHostStatus(): HostStatus | null {
-  return useSyncExternalStore(
-    hostUrl ? subscribeHostStatus : noopSubscribeHostStatus,
-    hostUrl ? hostStatus : nullHostStatus,
-  );
+/** True once the host's FIRST full board state has been applied (the boot
+ *  GET /api/state or the first WS push, whichever lands first). Gate any
+ *  destructive read on this: before it flips, the board's emptiness means
+ *  "not loaded yet", never "actually empty". */
+export function useBoardLoaded(): boolean {
+  return useSyncExternalStore(subscribeBoardLoaded, boardLoaded);
 }
 
 // ── Session telemetry ─────────────────────────────────────────────────────
@@ -87,9 +88,8 @@ export function useHostStatus(): HostStatus | null {
 // Live sessions fold the WS session-line stream incrementally (buffered
 // prefix first, so a block expanded mid-run isn't missing its head);
 // completed sessions stay inert until `load()` — the lazy expand — fetches
-// GET /api/sessions/:id/log and folds it once. Local mode has no host and
-// therefore no telemetry: the hook returns null and the event lines stand
-// alone.
+// GET /api/sessions/:id/log and folds it once. The hook returns null only
+// when there's no session to report on.
 
 const LIVE_SESSION_STATES: readonly SessionState[] = ["queued", "spawning", "running"];
 
@@ -133,7 +133,7 @@ export function useSessionTelemetry(
   const foldRef = useRef<{ fold: TelemetryFold; lines: SessionLine[] } | null>(null);
 
   useEffect(() => {
-    if (!hostUrl || !sessionId || !live) return;
+    if (!sessionId || !live) return;
     const fold = createFold(harnessFor(handle));
     const lines: SessionLine[] = [];
     foldRef.current = { fold, lines };
@@ -170,7 +170,7 @@ export function useSessionTelemetry(
   }, [live]);
 
   const load = useCallback(() => {
-    if (!hostUrl || !sessionId || live || loaded || loading) return;
+    if (!sessionId || live || loaded || loading) return;
     const harness = harnessFor(handle);
     setLoading(true);
     setError(null);
@@ -191,7 +191,7 @@ export function useSessionTelemetry(
     })();
   }, [sessionId, handle, live, loaded, loading]);
 
-  if (!hostUrl || !session) return null;
+  if (!session) return null;
   return {
     items: snap?.items ?? [],
     raw: snap?.raw ?? false,

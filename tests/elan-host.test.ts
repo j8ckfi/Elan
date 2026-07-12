@@ -269,6 +269,42 @@ describe("REST + persistence", () => {
     const missing = await fetch(`${host.url}/api/projects/nope`, { method: "DELETE" });
     expect(missing.status).toBe(404);
   }, 40_000);
+
+  test("PUT /api/state is 403 without the env gate, replaces + normalizes with it", async () => {
+    const host = boot();
+    const project = await req<Project>(host, "POST", "/api/projects", {
+      name: "Wipe me",
+      repoPath: "/tmp/elan-nowhere",
+    });
+    expect((await getState(host)).projects.some((p) => p.id === project.id)).toBe(true);
+
+    const put = (body: unknown) =>
+      fetch(`${host.url}/api/state`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+
+    // Ungated: refused, state untouched.
+    delete process.env.ELAN_ALLOW_STATE_REPLACE;
+    const forbidden = await put({ projects: [], threads: [] });
+    expect(forbidden.status).toBe(403);
+    expect((await getState(host)).projects.some((p) => p.id === project.id)).toBe(true);
+
+    // Gated on: replaced, and missing arrays normalize to [].
+    process.env.ELAN_ALLOW_STATE_REPLACE = "1";
+    try {
+      const ok = await put({ projects: [], threads: [] });
+      expect(ok.status).toBe(200);
+      const state = await getState(host);
+      expect(state.projects).toHaveLength(0);
+      expect(state.threads).toHaveLength(0);
+      expect(state.roster).toHaveLength(0);
+      expect(state.posts).toHaveLength(0);
+    } finally {
+      delete process.env.ELAN_ALLOW_STATE_REPLACE;
+    }
+  });
 });
 
 // ── 2. ping → turn: the full mock loop on ONE hot record ────────────────────

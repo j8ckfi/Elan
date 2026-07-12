@@ -52,6 +52,31 @@ function setHostStatus(next: HostStatus) {
   for (const cb of hostStatusSubscribers) cb();
 }
 
+// ── First-load signal ────────────────────────────────────────────────────
+// True once the FIRST authoritative full board state has been applied — the
+// boot GET /api/state snapshot or the first WS state push, whichever lands
+// first (applyServerState below is the single choke point). Distinct from
+// hostStatus === "connected": the socket can open before the state push
+// arrives. Consumers (App.tsx's tab restore) gate destructive reads on this —
+// an empty board pre-load means "unknown", an empty board post-load is real.
+let boardLoadedFlag = false;
+const boardLoadedSubscribers = new Set<() => void>();
+
+export function boardLoaded(): boolean {
+  return boardLoadedFlag;
+}
+
+export function subscribeBoardLoaded(cb: () => void): () => void {
+  boardLoadedSubscribers.add(cb);
+  return () => boardLoadedSubscribers.delete(cb);
+}
+
+function markBoardLoaded() {
+  if (boardLoadedFlag) return;
+  boardLoadedFlag = true;
+  for (const cb of boardLoadedSubscribers) cb();
+}
+
 // ── Session-line telemetry fan-out ───────────────────────────────────────
 // Module-level for the same reason as the status above: the WS socket lives
 // in the singleton host store, but session blocks subscribe per-session from
@@ -159,6 +184,15 @@ export function createHostStore(baseUrl: string): BoardStore {
     for (const cb of subscribers) cb();
   }
 
+  // The ONE place authoritative (server-sent) full state lands — the boot
+  // GET and every WS push both route through here, so the first-load signal
+  // (markBoardLoaded) has a single choke point. Optimistic mutations call
+  // setState directly and never mark the board loaded.
+  function applyServerState(next: BoardState) {
+    setState(next);
+    markBoardLoaded();
+  }
+
   // Re-fetch the authoritative snapshot. Called after any failed mutation
   // (drops the optimistic entry naturally) and once at boot for a faster
   // first paint than waiting on the WS's first push.
@@ -166,7 +200,7 @@ export function createHostStore(baseUrl: string): BoardStore {
     try {
       const res = await fetch(`${base}/api/state`);
       if (!res.ok) return;
-      setState(normalizeState((await res.json()) as Partial<BoardState>));
+      applyServerState(normalizeState((await res.json()) as Partial<BoardState>));
     } catch (err) {
       console.error("[host-store] GET /api/state failed:", err);
     }
@@ -221,7 +255,7 @@ export function createHostStore(baseUrl: string): BoardStore {
         };
         if (msg.type === "state" && msg.state != null) {
           const next = normalizeState(msg.state as Partial<BoardState>);
-          setState(next);
+          applyServerState(next);
           pruneSessionLineBuffers(next);
         } else if (
           msg.type === "session-line" &&

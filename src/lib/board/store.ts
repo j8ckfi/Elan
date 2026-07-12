@@ -1,10 +1,10 @@
-// The BoardStore rules module + the browser (localStorage) implementation.
-// Contract and enforced rules live in docs/DATA-MODEL.md — keep the two in
-// sync. Three stores share createBoardStore: this file's createLocalStore,
-// the host's file-backed store (dev/elan-host.ts), and the UI's host client
-// (host-store.ts) which proxies to the host instead of using it directly.
+// The BoardStore rules module. Contract and enforced rules live in
+// docs/DATA-MODEL.md — keep the two in sync. Two stores share
+// createBoardStore: the host's file-backed store (dev/elan-host.ts) and the
+// UI's host client (host-store.ts) which proxies to the host instead of
+// using it directly. (Local mode — a localStorage store — is gone as of
+// 2026-07-12: the board is always host-backed.)
 
-import { emptyState } from "./seed";
 import {
   parseMentions,
   USER,
@@ -18,12 +18,6 @@ import {
   type Project,
   type Thread,
 } from "./types";
-
-// v3: v2 could hold records persisted by mid-refactor dev builds (posts
-// missing `attachments`, pre-rename roster entries). Bumping the key
-// abandons them; normalizeState() below keeps future drift from crashing.
-const STORAGE_KEY = "elan.board.v3";
-const PERSIST_DEBOUNCE_MS = 150;
 
 export interface BoardStore {
   getState(): BoardState;
@@ -120,8 +114,13 @@ export interface BoardStoreOptions {
 }
 
 /** The rules module: every mutation, every store-enforced invariant, written
- *  once. Implementations differ only in where state comes from and goes. */
-export function createBoardStore({ initial, persist }: BoardStoreOptions): BoardStore {
+ *  once. Implementations differ only in where state comes from and goes.
+ *  Returns the BoardStore plus `replaceState` — a wholesale swap the host
+ *  needs for its test-gated PUT /api/state (not part of the shared contract,
+ *  so host-store.ts stays untouched). */
+export function createBoardStore({ initial, persist }: BoardStoreOptions): BoardStore & {
+  replaceState(next: BoardState): void;
+} {
   let state = initial;
   const subscribers = new Set<() => void>();
 
@@ -317,6 +316,13 @@ export function createBoardStore({ initial, persist }: BoardStoreOptions): Board
       });
     },
 
+    // Wholesale state swap. Runs the same setState path as every mutation, so
+    // persist + subscribers (the host's WS broadcast) fire exactly as usual.
+    // Callers normalize first; the host gates this behind an env flag.
+    replaceState(next) {
+      setState(next);
+    },
+
   };
 }
 
@@ -380,38 +386,4 @@ export function normalizeState(parsed: Partial<BoardState>): BoardState {
         str(s.threadId) && threadIds.has(s.threadId),
     ),
   };
-}
-
-// ── The browser store ────────────────────────────────────────────────────
-
-function loadState(): BoardState {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return emptyState();
-    const parsed = JSON.parse(raw) as Partial<BoardState> | null;
-    if (!parsed || !Array.isArray(parsed.threads)) return emptyState();
-    return normalizeState(parsed);
-  } catch {
-    // Corrupt JSON, quota weirdness, whatever — never throw. Empty, not
-    // demo: a user's first board must be their own (docs/DATA-MODEL.md).
-    return emptyState();
-  }
-}
-
-export function createLocalStore(): BoardStore {
-  let persistTimer: ReturnType<typeof setTimeout> | null = null;
-  return createBoardStore({
-    initial: loadState(),
-    persist(state) {
-      if (persistTimer != null) clearTimeout(persistTimer);
-      persistTimer = setTimeout(() => {
-        persistTimer = null;
-        try {
-          localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-        } catch {
-          // Best-effort; a full quota shouldn't crash the app.
-        }
-      }, PERSIST_DEBOUNCE_MS);
-    },
-  });
 }

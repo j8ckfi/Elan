@@ -27,3 +27,4 @@ dist-ssr
 test-results
 playwright-report
 .elan/
+.elan-e2e/
