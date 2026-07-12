@@ -15,10 +15,12 @@ import {
 } from "react";
 import type { ChatItem } from "@/lib/agent/types";
 import {
+  boardLoaded,
   bufferedSessionLines,
   createHostStore,
   hostBaseUrl,
   hostStatus,
+  subscribeBoardLoaded,
   subscribeHostStatus,
   subscribeSessionLines,
   type HostStatus,
@@ -71,6 +73,14 @@ export function useBoard(): BoardState {
 // host client tracks a socket).
 export function useHostStatus(): HostStatus {
   return useSyncExternalStore(subscribeHostStatus, hostStatus);
+}
+
+/** True once the host's FIRST full board state has been applied (the boot
+ *  GET /api/state or the first WS push, whichever lands first). Gate any
+ *  destructive read on this: before it flips, the board's emptiness means
+ *  "not loaded yet", never "actually empty". */
+export function useBoardLoaded(): boolean {
+  return useSyncExternalStore(subscribeBoardLoaded, boardLoaded);
 }
 
 // ── Session telemetry ─────────────────────────────────────────────────────

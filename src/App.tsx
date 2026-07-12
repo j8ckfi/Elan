@@ -25,7 +25,7 @@ import { Welcome } from "@/components/board/Welcome";
 import { TabStrip, type TabDescriptor } from "@/components/board/TabStrip";
 import { ThreadView } from "@/components/board/thread/ThreadView";
 import { DraftThread } from "@/components/board/thread/DraftThread";
-import { useBoard, boardStore } from "@/lib/board/useBoard";
+import { useBoard, useBoardLoaded, boardStore } from "@/lib/board/useBoard";
 import { cn } from "@/lib/utils";
 
 // ── Navigation ───────────────────────────────────────────────────────────────
@@ -52,8 +52,12 @@ const nextKey = () =>
 
 const TABS_KEY = "elan.tabs.v1";
 
-// Reopen last session's thread tabs; drop tabs whose thread is gone and
-// never persist uncreated drafts (they were, by definition, empty).
+// Reopen last session's thread tabs. Hydrate the persisted list RAW — the
+// board is host-backed and its state hasn't loaded yet at mount, so filtering
+// against it here would wrongly prune every tab (and the persist effect would
+// write that loss back). Tabs whose thread is really gone are pruned by the
+// stale-tab effect below, which waits for the first loaded board state.
+// Uncreated drafts are never persisted (they were, by definition, empty).
 function hydrateTabs(): { tabs: OpenTab[]; activeKey: string } {
   try {
     const raw = JSON.parse(localStorage.getItem(TABS_KEY) ?? "null") as {
@@ -61,9 +65,8 @@ function hydrateTabs(): { tabs: OpenTab[]; activeKey: string } {
       activeThreadId?: string | null;
     } | null;
     if (!raw?.threadIds) return { tabs: [], activeKey: "board" };
-    const live = new Set(boardStore().getState().threads.map((t) => t.id));
     const tabs = raw.threadIds
-      .filter((id) => live.has(id))
+      .filter((id): id is string => typeof id === "string")
       .map((id) => ({ key: nextKey(), threadId: id, draft: false }));
     const active = tabs.find((t) => t.threadId === raw.activeThreadId);
     return { tabs, activeKey: active?.key ?? "board" };
@@ -106,8 +109,13 @@ function App() {
   // ThreadView's "no longer exists" empty state indefinitely. Draft tabs
   // (threadId unset until the first title keystroke) are untouched. Bails
   // out to the same tab-state reference when nothing's stale, so this is a
-  // no-op render on every ordinary board mutation.
+  // no-op render on every ordinary board mutation. GATED on the first loaded
+  // board state: pre-load, threads === [] means "unknown", not "deleted" —
+  // pruning restored tabs against it would lose them (and the persist effect
+  // would write the loss back to elan.tabs.v1).
+  const loaded = useBoardLoaded();
   useEffect(() => {
+    if (!loaded) return;
     setTabState((prev) => {
       const live = new Set(board.threads.map((t) => t.id));
       const staleKeys = new Set(
@@ -118,7 +126,7 @@ function App() {
       const activeKey = staleKeys.has(prev.activeKey) ? "board" : prev.activeKey;
       return { tabs, activeKey };
     });
-  }, [board.threads]);
+  }, [board.threads, loaded]);
 
   const openThread = useCallback((threadId: string) => {
     setTabState((prev) => {
