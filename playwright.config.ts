@@ -16,8 +16,12 @@ export default defineConfig({
   },
   webServer: [
     {
+      // ELAN_STATE_DIR must be ABSOLUTE: the host puts `${stateDir}/bin` (the
+      // elan shim) on every child's PATH, and agent children run with cwd =
+      // the project's repoPath — a relative PATH entry would not resolve
+      // there and every `elan` call in the child would ENOENT.
       command:
-        "ELAN_HOST_PORT=4529 ELAN_STATE_DIR=.elan-e2e ELAN_ALLOW_STATE_REPLACE=1 bun dev/elan-host.ts",
+        'ELAN_HOST_PORT=4529 ELAN_STATE_DIR="$PWD/.elan-e2e" ELAN_ALLOW_STATE_REPLACE=1 bun dev/elan-host.ts',
       url: "http://127.0.0.1:4529/api/state",
       reuseExistingServer: !process.env.CI,
       stdout: "ignore",

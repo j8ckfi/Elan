@@ -13,9 +13,20 @@
 // The assertions come straight from docs/FRONTEND.md: First run, the tab row,
 // the draft page, the thread view. Orchestration is covered elsewhere.
 
+import { mkdirSync } from "node:fs";
 import { expect, test, type Page } from "@playwright/test";
 
 const HOST_URL = "http://127.0.0.1:4529";
+
+// The fixture's repoPaths must EXIST: when a project's repoPath is missing,
+// the host falls back to spawning agents in its own cwd — the source tree —
+// and the mock agent would drop its artifacts (mock-plan.md) into the repo.
+// Plain dirs are enough (not git repos): the host uses them as the session
+// cwd directly, no worktree.
+test.beforeAll(() => {
+  for (const dir of ["/tmp/e2e-engram", "/tmp/e2e-nimbus"])
+    mkdirSync(dir, { recursive: true });
+});
 // A fresh install: no projects/threads, but the default roster (a real host
 // boots emptyState() with these). Harnesses are forced to `mock` so nothing
 // can spawn a real CLI even if a test were to tag from this state.
