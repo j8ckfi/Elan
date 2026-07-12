@@ -8,7 +8,9 @@
 import type { RosterEntry } from "@/lib/board/types";
 
 export function emphasizeMentions(body: string, roster: RosterEntry[]): string {
-  const handles = new Set(roster.map((r) => r.handle));
+  // "user" is reserved (never in the roster) but @user is how agents address
+  // the human — it reads as a mention, so it emphasizes like one.
+  const handles = new Set([...roster.map((r) => r.handle), "user"]);
   return body.replace(/@([a-z0-9][a-z0-9._-]*)/gi, (match, h: string) =>
     handles.has(h.toLowerCase()) ? `**${match}**` : match,
   );

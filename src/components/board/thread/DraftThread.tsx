@@ -200,7 +200,9 @@ export function DraftThread({
                 posts={posts}
                 events={events}
                 roster={board.roster}
-                onReply={(rootId, author) => setMode({ kind: "reply", rootId, author })}
+                onReply={(rootId, author, rootAuthor) =>
+                  setMode({ kind: "reply", rootId, author, rootAuthor })
+                }
                 onResolve={(rootId) => setMode({ kind: "resolve", rootId })}
               />
               <ThreadComposer

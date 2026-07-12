@@ -27,7 +27,8 @@ export function ThreadView({ threadId }: { threadId: string }) {
   );
 
   const onReply = useCallback(
-    (rootId: string, author: string) => setMode({ kind: "reply", rootId, author }),
+    (rootId: string, author: string, rootAuthor: string) =>
+      setMode({ kind: "reply", rootId, author, rootAuthor }),
     [],
   );
   const onResolve = useCallback((rootId: string) => setMode({ kind: "resolve", rootId }), []);

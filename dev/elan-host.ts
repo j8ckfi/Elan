@@ -117,7 +117,8 @@ const CORS = {
 } as const;
 
 const EVENT_TYPES = new Set<string>([
-  "created", "tagged", "session-start", "session-end", "artifact", "label",
+  "created", "tagged", "session-start", "session-end", "caught-up", "artifact",
+  "label",
 ]);
 
 // (The harness registry — HARNESSES — lives below, after the extractors and
@@ -1493,6 +1494,8 @@ function eventLine(e: BoardEvent): string {
       return `- @${String(p.handle)} session started`;
     case "session-end":
       return `- @${String(p.handle)} session ended (${String(p.outcome)})`;
+    case "caught-up":
+      return `- ${e.actor} caught up (nothing needed)`;
     case "artifact": {
       const a = (p.attachment ?? {}) as { name?: string; path?: string };
       return `- ${e.actor} attached ${a.path ?? a.name ?? "an artifact"}`;
@@ -2404,6 +2407,8 @@ export function startHost(opts: StartHostOptions = {}): ElanHost {
     setTurnState(record.id, turn.eventId, "done");
     patchRecord(record.id, { state: "idle", reason: undefined, ...extra });
     const st = store.getState();
+    // Host bookkeeping lines never count as the agent's voice.
+    const HOST_EVENTS = new Set(["session-start", "session-end", "caught-up"]);
     const spoke =
       st.posts.some(
         (p) =>
@@ -2416,8 +2421,7 @@ export function startHost(opts: StartHostOptions = {}): ElanHost {
           e.threadId === record.threadId &&
           e.actor === record.handle &&
           e.at >= turnStartedAt &&
-          e.type !== "session-start" &&
-          e.type !== "session-end",
+          !HOST_EVENTS.has(e.type),
       );
     const everSpoke =
       spoke ||
@@ -2428,18 +2432,28 @@ export function startHost(opts: StartHostOptions = {}): ElanHost {
         (e) =>
           e.threadId === record.threadId &&
           e.actor === record.handle &&
-          e.type !== "session-start" &&
-          e.type !== "session-end" &&
+          !HOST_EVENTS.has(e.type) &&
           e.type !== "tagged",
       );
-    if (!everSpoke && streamText?.trim()) {
-      store.addPost({
-        threadId: record.threadId,
-        author: record.handle,
-        body: streamText.trim(),
-        suppressTags: true, // a ventriloquized post must never summon anyone
-      });
-      say(`[host] @${record.handle} never used elan this turn — posted its final message`);
+    if (!spoke) {
+      if (!everSpoke && streamText?.trim()) {
+        store.addPost({
+          threadId: record.threadId,
+          author: record.handle,
+          body: streamText.trim(),
+          suppressTags: true, // a ventriloquized post must never summon anyone
+        });
+        say(`[host] @${record.handle} never used elan this turn — posted its final message`);
+      } else {
+        // Silence is an answer — file the quiet turn so the board shows the
+        // ping was heard (the feed folds consecutive ones into one line).
+        store.addEvent({
+          threadId: record.threadId,
+          actor: record.handle,
+          type: "caught-up",
+          payload: {},
+        });
+      }
     }
     say(`[host] @${record.handle} turn done`);
   }

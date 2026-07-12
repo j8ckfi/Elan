@@ -1907,12 +1907,63 @@ describe("silent-success fallback", () => {
         ),
       ).toBe(false);
       expect(state.sessions.some((x) => x.handle === "fable-5")).toBe(false);
+      // A ventriloquized turn is not a quiet turn — no caught-up line.
+      expect(
+        state.events.some((e) => e.threadId === thread.id && e.type === "caught-up"),
+      ).toBe(false);
     } finally {
       if (prevSilent === undefined) delete process.env.ELAN_MOCK_SILENT;
       else process.env.ELAN_MOCK_SILENT = prevSilent;
       if (prevExtra === undefined) delete process.env.ELAN_SPAWN_ENV_EXTRA;
       else process.env.ELAN_SPAWN_ENV_EXTRA = prevExtra;
     }
+  }, 40_000);
+
+  test("a quiet turn after the agent has spoken files caught-up, not a post", async () => {
+    const host = boot();
+    const project = await req<{ id: string }>(host, "POST", "/api/projects", {
+      name: "quiet turns", repoPath: newDir("quiet-repo-"),
+    });
+    const thread = await req<{ id: string }>(host, "POST", "/api/threads", {
+      projectId: project.id, title: "quiet turns", body: "",
+    });
+
+    // Turn 1: the demo script — the agent speaks on the board.
+    await req(host, "POST", "/api/posts", {
+      threadId: thread.id, author: "user", body: "@demo-bot do the thing",
+    });
+    await pollUntil(async () => {
+      const s = await getState(host);
+      const r = recordsFor(s, thread.id, "demo-bot")[0];
+      return r?.state === "idle" && turnsOf(r)[0]?.state === "done" ? r : undefined;
+    }, "the first (speaking) turn to finish");
+    const postsBefore = (await getState(host)).posts.filter(
+      (p) => p.threadId === thread.id && p.author === "demo-bot",
+    ).length;
+
+    // Turn 2: the etiquette no-op — stream-only turn end, zero elan calls.
+    await req(host, "POST", "/api/posts", {
+      threadId: thread.id, author: "user", body: "@demo-bot [quiet] just fyi",
+    });
+    const state = await pollUntil(async () => {
+      const s = await getState(host);
+      const r = recordsFor(s, thread.id, "demo-bot")[0];
+      const turns = r ? turnsOf(r) : [];
+      return r?.state === "idle" && turns.length === 2 && turns[1].state === "done"
+        ? s
+        : undefined;
+    }, "the quiet turn to finish");
+
+    // Silence stayed silent: the agent has spoken before, so its stream text
+    // is NOT ventriloquized — the turn files one caught-up event instead.
+    expect(
+      state.posts.filter((p) => p.threadId === thread.id && p.author === "demo-bot"),
+    ).toHaveLength(postsBefore);
+    const quiet = state.events.filter(
+      (e) => e.threadId === thread.id && e.type === "caught-up",
+    );
+    expect(quiet).toHaveLength(1);
+    expect(quiet[0].actor).toBe("demo-bot");
   }, 40_000);
 });
 

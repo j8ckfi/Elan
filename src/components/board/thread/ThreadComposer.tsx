@@ -5,14 +5,17 @@
 
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { boardStore } from "@/lib/board/useBoard";
-import { USER, type Author, type RosterEntry } from "@/lib/board/types";
+import { parseMentions, USER, type Author, type RosterEntry } from "@/lib/board/types";
 import { MentionPopover } from "./MentionPopover";
 import { FlagGlyph } from "./glyphlets";
 import { cn } from "@/lib/utils";
 
 export type ComposerMode =
   | { kind: "comment" }
-  | { kind: "reply"; rootId: string; author: Author }
+  /** `author` is who the user clicked Reply on (the label); `rootAuthor` is
+   *  the exchange root's author — who the store's implicit reply-ping goes
+   *  to (docs/DATA-MODEL.md), surfaced by the summons chip. */
+  | { kind: "reply"; rootId: string; author: Author; rootAuthor: Author }
   | { kind: "resolve"; rootId: string };
 
 const MAX_HEIGHT = 160; // ~8 lines of 13px text
@@ -43,6 +46,22 @@ export function ThreadComposer({ threadId, roster, mode, onModeChange }: ThreadC
     [token, roster],
   );
   const popoverOpen = token != null && matches.length > 0;
+
+  // Mentions are load-bearing — sending is summoning. Draft @handles plus the
+  // reply-mode implicit ping (a reply summons the exchange root's author —
+  // the store rule, shown before it fires). Deduped, agents only.
+  const summons = useMemo(() => {
+    const handles = parseMentions(value, roster);
+    if (
+      mode.kind === "reply" &&
+      mode.rootAuthor !== USER &&
+      roster.some((r) => r.handle === mode.rootAuthor) &&
+      !handles.includes(mode.rootAuthor)
+    ) {
+      handles.push(mode.rootAuthor);
+    }
+    return handles;
+  }, [value, roster, mode]);
 
   // Entering reply/resolve mode pulls focus into the box.
   useEffect(() => {
@@ -187,13 +206,21 @@ export function ThreadComposer({ threadId, roster, mode, onModeChange }: ThreadC
                 "max-h-[160px] overflow-y-auto",
               )}
             />
-            <div className="mt-1.5 flex justify-end">
+            <div className="mt-1.5 flex items-center gap-2">
+              {summons.length > 0 && (
+                <span className="inline-flex min-w-0 items-center gap-1 rounded-[5px] border border-dashed border-border px-2 py-0.5 text-[11.5px] text-muted-foreground">
+                  summons{" "}
+                  <span className="truncate font-medium text-foreground">
+                    {summons.join(", ")}
+                  </span>
+                </span>
+              )}
               <button
                 type="button"
                 onClick={submit}
                 disabled={empty}
                 className={cn(
-                  "rounded-md bg-primary px-2.5 py-1 text-[12px] font-medium text-primary-foreground",
+                  "ml-auto rounded-md bg-primary px-2.5 py-1 text-[12px] font-medium text-primary-foreground",
                   "transition-[opacity,transform] active:scale-[0.97]",
                   "disabled:pointer-events-none disabled:opacity-40",
                 )}

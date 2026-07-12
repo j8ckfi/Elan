@@ -1,12 +1,13 @@
-// The session block — a session-start event line's working timeline
-// (docs/FRONTEND.md "Session telemetry"). Live sessions render the agent
-// mark + a shimmering current-step label (monochrome — the gradient lives
-// in the tab bar only), with the collapsed ThinkingSteps timeline
-// beneath; completed sessions rest as "Worked for 42s ▸" and replay the
-// on-disk log lazily on first expand. Harnesses without a stream translator
-// get the honest fallback: the raw log tail in a fenced block, same
-// affordance. Error sessions keep the host's ⚠︎ post as their headline —
-// this block is only the detail beneath the event line.
+// The turn block — a session-start event renders as one byline: agent mark +
+// handle + the worked chip (docs/FRONTEND.md "The turn ledger"). Live turns
+// show the shimmering current-step label (monochrome — the gradient lives in
+// the tab bar only); resting ones read "worked 42s · 12 steps ▸" and replay
+// the on-disk log lazily on first expand, the ThinkingSteps timeline opening
+// beneath the byline. Harnesses without a stream translator get the honest
+// fallback: the raw log tail in a fenced block, same affordance. When there's
+// no telemetry at all (local mode, logless session) the caller's `fallback`
+// renders instead — usually the plain event line. Error sessions keep the
+// host's ⚠︎ post as their headline — this block is only the work detail.
 
 import { useMemo, useState } from "react";
 import type { ChatItem } from "@/lib/agent/types";
@@ -86,23 +87,29 @@ function formatDuration(ms: number): string {
 export function SessionBlock({
   sessionId,
   roster,
+  fallback = null,
 }: {
   sessionId: string;
   roster: RosterEntry[];
+  /** Rendered when there is no telemetry to show (local mode, logless
+   *  session) — usually the plain session-start event line. */
+  fallback?: React.ReactNode;
 }) {
   // Session records arrive read-only on the board state (host mode); the
   // block resolves its own record so ActivityFeed's props stay unchanged.
   const board = useBoard();
   const session = board.sessions.find((s) => s.id === sessionId);
-  return <SessionBlockInner session={session} roster={roster} />;
+  return <SessionBlockInner session={session} roster={roster} fallback={fallback} />;
 }
 
 function SessionBlockInner({
   session,
   roster,
+  fallback,
 }: {
   session: AgentSessionRecord | undefined;
   roster: RosterEntry[];
+  fallback: React.ReactNode;
 }) {
   const telemetry = useSessionTelemetry(session);
   const [open, setOpen] = useState(false);
@@ -113,13 +120,13 @@ function SessionBlockInner({
   );
 
   // Local mode / unknown session: the event line stands alone.
-  if (!session || !telemetry) return null;
+  if (!session || !telemetry) return <>{fallback}</>;
 
   const { live, raw, loaded, loading, error, lines, load } = telemetry;
   const steps = rows.filter((r) => r.kind === "step");
 
   // Nothing to show for a finished session with no log to replay.
-  if (!live && !session.logPath && !loaded) return null;
+  if (!live && !session.logPath && !loaded) return <>{fallback}</>;
 
   const lastStep = steps[steps.length - 1];
   const liveLabel = (lastStep?.active && lastStep.label) || "Working";
@@ -127,11 +134,11 @@ function SessionBlockInner({
   const duration =
     session.endedAt != null ? session.endedAt - session.startedAt : null;
   const restingLabel = `${
-    duration != null ? `Worked for ${formatDuration(duration)}` : "Worked"
+    duration != null ? `worked ${formatDuration(duration)}` : "worked"
   }${loaded && !raw && steps.length > 0 ? ` · ${steps.length} step${steps.length === 1 ? "" : "s"}` : ""}`;
 
   return (
-    <div className="ml-[14px] pb-1">
+    <div className="py-1">
       <ThinkingSteps
         open={open}
         onOpenChange={(next: boolean) => {
@@ -139,19 +146,24 @@ function SessionBlockInner({
           // The lazy replay: completed sessions fetch + fold on first expand.
           if (next) load();
         }}
-        className="w-full max-w-[34rem]"
+        className="w-full max-w-full"
       >
-        <ThinkingStepsHeader>
-          {live ? (
-            <span className="inline-flex items-center gap-2">
-              <AgentAvatar author={session.handle} roster={roster} size={14} />
+        {/* The byline: mark + handle outside the trigger, the worked chip IS
+            the trigger — clicking it opens the timeline in place. */}
+        <div className="flex min-w-0 items-center gap-2">
+          <AgentAvatar author={session.handle} roster={roster} size={18} />
+          <span className="truncate text-[13px] font-medium text-foreground">
+            {session.handle}
+          </span>
+          <ThinkingStepsHeader className="px-1.5 py-0.5">
+            {live ? (
               <span className="shimmer-run">{liveLabel}</span>
-            </span>
-          ) : (
-            restingLabel
-          )}
-        </ThinkingStepsHeader>
-        <ThinkingStepsContent>
+            ) : (
+              restingLabel
+            )}
+          </ThinkingStepsHeader>
+        </div>
+        <ThinkingStepsContent className="max-w-[34rem] pl-[26px]">
           <SessionTimeline
             rows={rows}
             raw={raw}

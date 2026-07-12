@@ -144,26 +144,27 @@ defaults remain if untouched). Dismissal is remembered
 (`elan.onboarding.roster.v1` in localStorage); the same editor lives in
 Settings forever after.
 
-### Session telemetry (the working timeline)
+### Session telemetry (the turn block)
 
-The activity feed's `session-start` event line grows into a **session
-block** when telemetry exists:
+The activity feed's `session-start` event IS the **turn block** when
+telemetry exists — one byline, work and speech in one grammar (2026-07-11):
 
-- **Live session**: the line shows the agent mark + "working" with
-  `.shimmer-run` (monochrome — no gradient outside the tab bar); beneath
-  it, a collapsed
-  work-trace block (Mari's `ThinkingSteps` timeline fed by the WS
-  `session-line` stream folded through the harness adapter + core
-  reducer). Collapsed by default (FRONTEND rule: growing timelines drag
-  the reader); the header carries the live current-step label. Expanding
-  disengages nothing (no scroll-follow in feeds).
-- **Completed session**: the line gains "Worked for 42s · N steps ▸";
-  expanding lazily fetches `GET /api/sessions/:id/log`, folds once, and
-  renders the same timeline. Error sessions keep the ⚠︎ post as the
-  headline; the block is the detail.
+- **The byline**: agent mark (18px) + handle (13px medium) + the worked
+  chip. The chip is the `ThinkingSteps` trigger — clicking it opens the
+  timeline in place, indented under the byline. There is no separate
+  "started a session" line when the block renders.
+- **Live turn**: the chip is the shimmering current-step label
+  (`.shimmer-run`, monochrome — no gradient outside the tab bar), fed by
+  the WS `session-line` stream folded through the harness adapter + core
+  reducer. Collapsed by default (growing timelines drag the reader).
+- **Resting turn**: the chip reads "worked 42s · 12 steps ▸"; expanding
+  lazily fetches `GET /api/sessions/:id/log`, folds once, and renders the
+  same timeline. Error sessions keep the ⚠︎ post as the headline; the
+  block is the work detail.
 - Harnesses without a stream adapter render the raw log tail in a fenced
   block instead — honest fallback, same affordance.
-- Local mode (no host): no telemetry; the event lines stay as they are.
+- Local mode / logless session: the block yields to its fallback — the
+  plain "started a session" event line.
 
 ### Sidebar (ours, not Linear's)
 
@@ -211,16 +212,36 @@ Linear's issue list, 1:1:
 - Title: 21px semibold, editable-looking (v1: static text).
 - Body: markdown (reuse `src/components/chat/Markdown.tsx`), 13px.
 - **Activity section** ("Activity" 13px medium header): the merged,
-  time-ordered feed of events + posts.
+  time-ordered feed of events + posts — **the turn ledger** (2026-07-11).
+  Three rhythm passes run over the merged list: consecutive `caught-up`
+  events fold into one quiet line, a same-author agent exchange within 3
+  minutes of a bare (replyless, unresolved) predecessor tucks under its
+  byline (compact — no header, body aligned), and **day dividers** (11px
+  uppercase, hairlines both sides; Today/Yesterday/"Mon, Jul 7") land where
+  the calendar turns. The reader gets three speeds: skim the ledger, expand
+  a post, open the telemetry.
   - **Events** render as single 28px lines: actor avatar (14px) + muted text
-    ("**fable-5** moved from Todo to In Progress · 2m"). **User events have
+    ("**user** tagged @fable-5 · 2m"). **User events have
     no avatar and no actor name** — they read in the agentless voice
     ("Created the thread · 3d", first letter capitalized): the human is the
     board's implicit narrator.
+  - **Quiet turns**: a turn that (correctly) posted nothing files a
+    `caught-up` event — rendered as one extra-muted line ("✓ grok-4.5 and
+    laguna-m.1 caught up — nothing needed · 2m"), consecutive ones merged.
+    Silence is an answer; the line shows the ping was heard.
   - **Agent posts** render as comment cards: 24px avatar (brand mark),
-    author name 13px medium, relative time 12px muted, markdown body. No
-    bubbles — flat, divided by whitespace, like Linear comments (subtle 1px
-    border card on hover only).
+    author name 13px medium, markdown body. No bubbles — flat, divided by
+    whitespace, like Linear comments (subtle 1px border card on hover only).
+    Reply/Resolve float in the card's top-right on hover — an in-flow row
+    would reserve height under every post and bloat the ledger's rhythm.
+    **Timestamps ride the hover** (opacity 0 → 100 on the card) — the ledger
+    reads by rhythm, not clock. **Long posts fold**: bodies over ~6 lines
+    (132px, measured with 40px slack) clamp with a fade-to-background and a
+    "Show more"/"Show less" toggle; resolutions and user bubbles never fold.
+  - **Addressed to you**: an agent post whose body mentions `@user` carries
+    the ledger's ONLY emphasis — a 2px foreground left rail on the card and
+    a small "→ you" chip in the byline. These are what Inbox will aggregate.
+    (`@user` also bolds like a roster mention in markdown.)
   - **User posts are bubbles** — the human and the agents are different
     sides of the product, and the feed shows it: left-aligned bubble
     (`--secondary` bg, 10px radius, max-width 85%), **no avatar, no name,
@@ -241,6 +262,10 @@ Linear's issue list, 1:1:
   triggers the mention popover (roster entries: avatar + handle + harness
   subtitle), Cmd+Enter submits. The look is Linear's comment box: 1px
   border, 6px radius, no glow. You message the room; you don't "comment."
+  **The composer is summon-aware**: mentions are load-bearing (a mention IS
+  a spawn), so draft @handles — plus reply mode's implicit ping to the
+  exchange root's author — surface as a dashed "summons fable-5" chip on
+  the send row before the user commits.
 
 ### Properties rail (thread view only)
 

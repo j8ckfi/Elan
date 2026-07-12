@@ -10,6 +10,8 @@
 //   turn N > 1 → `elan post "turn N ack: <prompt's first 40 chars>"`;
 //   any turn whose PING contains "[stall]" → no result line, sleep forever
 //                (the host's per-turn timeout test);
+//   any turn whose PING contains "[quiet]" → no elan calls, stream-only
+//                turn end (the host's caught-up / quiet-turn test);
 //   ELAN_MOCK_SILENT=1 → turn 1 answers ONLY in the stream (the host's
 //                silent-success fallback test) — no elan calls.
 //
@@ -112,6 +114,13 @@ for await (const line of console) {
   if (pingOf(prompt).includes("[stall]")) {
     // Stall mode: never settle the turn — the host must SIGTERM us.
     await new Promise(() => {});
+  }
+
+  if (pingOf(prompt).includes("[quiet]")) {
+    // Quiet mode: the etiquette-following no-op turn — no elan calls, answer
+    // only in the stream (the host files it as a caught-up event).
+    turnEnd("nothing needed");
+    continue;
   }
 
   if (turnNo === 1) {

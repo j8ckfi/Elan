@@ -283,6 +283,9 @@ event stream while the host surfaced stderr noise). The rules:
    only while the agent has NEVER spoken on the thread — an agent that has
    posted before and stays quiet is following the no-op etiquette rule, and
    ventriloquizing those turns flooded boards with acknowledgment spam.
+   Every other quiet completion files a `caught-up` event instead ("silence
+   is an answer" made visible — the feed folds consecutive ones into a
+   single muted line).
 
 Session lifecycle: `queued → spawning → running → done | error | waiting`
 (+ `error` reasons: `orphaned-by-restart`, `timeout`, `runner-not-found`,

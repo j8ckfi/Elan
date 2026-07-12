@@ -67,6 +67,8 @@ export type BoardEventType =
   | "tagged"         // payload: { handle: string }  (actor tagged handle)
   | "session-start"  // payload: { sessionId: string; handle: string }
   | "session-end"    // payload: { sessionId: string; handle: string; outcome: "done"|"error"|"waiting" }
+  | "caught-up"      // payload: {} — a turn that (correctly) posted nothing;
+                     //   filed by the host, folded into one feed line
   | "artifact"       // payload: { attachment: Attachment }
   | "label";         // payload: { added?: string; removed?: string }
 

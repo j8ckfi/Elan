@@ -74,6 +74,10 @@ export type BoardEventType =
   | "tagged"
   | "session-start"
   | "session-end"
+  /** A turn that completed having (correctly) posted nothing — silence is an
+   *  answer, and this line is how the board shows the ping was heard. Filed
+   *  by the host in completeTurn; the feed merges consecutive ones. */
+  | "caught-up"
   | "artifact"
   | "label";
 
