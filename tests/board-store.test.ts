@@ -1,43 +1,22 @@
 // Board store contract — the rules docs/DATA-MODEL.md says the store (not
-// callers) enforces: reply flattening, mention tagging, updatedAt bumps,
-// and localStorage hydrate-or-seed persistence.
+// callers) enforces: reply flattening, mention tagging, updatedAt bumps, and
+// hostile-input normalization (normalizeState).
 
-import { beforeEach, describe, expect, test } from "bun:test";
-import { createBoardStore, createLocalStore } from "@/lib/board/store";
-import { seedState } from "@/lib/board/seed";
-import { toExchanges } from "@/lib/board/types";
+import { describe, expect, test } from "bun:test";
+import { createBoardStore, normalizeState } from "@/lib/board/store";
+import { emptyState, seedState } from "@/lib/board/seed";
+import { toExchanges, type BoardState } from "@/lib/board/types";
 
-// bun:test runs outside a DOM — createLocalStore talks to the bare global
-// `localStorage`, so stub a minimal in-memory one before any test runs.
-class MemoryStorage {
-  private data = new Map<string, string>();
-  getItem(key: string): string | null {
-    return this.data.has(key) ? this.data.get(key)! : null;
-  }
-  setItem(key: string, value: string): void {
-    this.data.set(key, value);
-  }
-  removeItem(key: string): void {
-    this.data.delete(key);
-  }
-  clear(): void {
-    this.data.clear();
-  }
-}
-
-const memoryStorage = new MemoryStorage();
-globalThis.localStorage = memoryStorage as unknown as Storage;
-
-// Every test starts from a clean slate. createLocalStore() now boots EMPTY
-// (first-run Welcome); tests that need board data load the demo explicitly.
-beforeEach(() => {
-  memoryStorage.clear();
-});
-
-// The demo was removed from the product; seedState survives as a rich test
-// fixture, loaded directly through the rules module.
+// The board is always host-backed now (local mode is gone, 2026-07-12), so
+// these unit tests drive the rules module directly with a no-op persist.
+// seedState survives only as a rich test fixture.
 function seededStore() {
   return createBoardStore({ initial: seedState(), persist: () => {} });
+}
+
+// A first-run (empty) store — the default roster, no projects or threads.
+function emptyStore() {
+  return createBoardStore({ initial: emptyState(), persist: () => {} });
 }
 
 describe("updateThread", () => {
@@ -235,7 +214,7 @@ describe("addPost — reply pings", () => {
 
 describe("createProject", () => {
   test("derives a key from the name and de-dupes against existing keys", () => {
-    const store = createLocalStore();
+    const store = emptyStore();
     const a = store.createProject({ name: "Elan Orchestrator", repoPath: "/x" });
     expect(a.key).toBe("EO");
     const b = store.createProject({ name: "engram", repoPath: "/y" });
@@ -245,7 +224,7 @@ describe("createProject", () => {
   });
 
   test("assigns rotating colors and returns a usable project", () => {
-    const store = createLocalStore();
+    const store = emptyStore();
     const p = store.createProject({ name: "Solo", repoPath: "/s" });
     expect(p.color).toMatch(/^oklch\(/);
     const thread = store.createThread({ projectId: p.id, title: "first", body: "" });
@@ -256,7 +235,7 @@ describe("createProject", () => {
 
 describe("setRoster", () => {
   test("replaces the roster, dropping invalid and duplicate handles", () => {
-    const store = createLocalStore();
+    const store = emptyStore();
     store.setRoster([
       { handle: "fable-5", harness: "claude-code", color: "#111" },
       { handle: "fable-5", harness: "codex", color: "#222" }, // dup → dropped
@@ -269,46 +248,9 @@ describe("setRoster", () => {
   });
 });
 
-describe("localStorage persistence", () => {
-  test("round-trips mutations through localStorage (debounced) on the next hydrate", async () => {
-    const store = createLocalStore();
-    const project = store.createProject({ name: "Persist", repoPath: "/p" });
-    const thread = store.createThread({ projectId: project.id, title: "persisted", body: "b" });
-
-    await new Promise((r) => setTimeout(r, 250)); // let the debounce flush
-
-    const raw = localStorage.getItem("elan.board.v3");
-    expect(raw).toBeTruthy();
-    const parsed = JSON.parse(raw!) as { threads: Array<{ id: string }> };
-    expect(parsed.threads.some((t) => t.id === thread.id)).toBe(true);
-
-    const rehydrated = createLocalStore();
-    expect(rehydrated.getState().threads.some((t) => t.id === thread.id)).toBe(true);
-  });
-
-  test("falls back to emptyState on corrupt JSON without throwing", () => {
-    localStorage.setItem("elan.board.v3", "{not valid json at all");
-
-    let store: ReturnType<typeof createLocalStore> | undefined;
-    expect(() => {
-      store = createLocalStore();
-    }).not.toThrow();
-
-    // Empty, not demo: a corrupt board must not resurrect as fiction.
-    expect(store!.getState().projects).toHaveLength(0);
-    expect(store!.getState().threads).toHaveLength(0);
-    expect(store!.getState().roster.length).toBeGreaterThan(0); // default roster
-  });
-
-  test("boots empty (first run) when the key is absent", () => {
-    const store = createLocalStore();
-    expect(store.getState().projects).toHaveLength(0);
-    expect(store.getState().threads).toHaveLength(0);
-    expect(store.getState().roster.map((r) => r.handle)).toContain("fable-5");
-  });
-
-  test("deleteProject cascades and can empty the board back to first-run", () => {
-    const store = createLocalStore();
+describe("deleteProject cascade", () => {
+  test("cascades and can empty the board back to first-run", () => {
+    const store = emptyStore();
     const p = store.createProject({ name: "Only", repoPath: "/o" });
     const t = store.createThread({ projectId: p.id, title: "t", body: "" });
     store.addPost({ threadId: t.id, author: "user", body: "hi" });
@@ -321,47 +263,45 @@ describe("localStorage persistence", () => {
     expect(state.posts).toHaveLength(0);
     expect(state.events).toHaveLength(0);
   });
+});
 
-  // Regression: a mid-refactor dev build once persisted posts without
-  // `attachments` and event types this build no longer knows — hydration
-  // must normalize (drop/default), never crash the render downstream.
-  test("normalizes stale-shaped records on hydrate instead of crashing", () => {
-    // `status` is a status-era leftover — hydration must shrug it off.
+describe("normalizeState — hostile input", () => {
+  // The host loads its state file (and the test-gated PUT /api/state body)
+  // through normalizeState: external, possibly-stale input must degrade to a
+  // dropped/defaulted record, never a crash downstream.
+  test("normalizes stale-shaped records instead of crashing", () => {
+    // `status` is a status-era leftover — normalization must shrug it off.
     const t = { id: "t1", projectId: "p1", number: 1, title: "stale", body: "b",
       status: "in_progress", labels: ["x"], createdBy: "user", createdAt: 1, updatedAt: 2 };
-    localStorage.setItem(
-      "elan.board.v3",
-      JSON.stringify({
-        projects: [{ id: "p1", key: "ENG", name: "Engram", repoPath: "/x", color: "#fff", createdAt: 1 }],
-        roster: [{ handle: "gpt-5.6", harness: "codex", color: "#0f9d8f" }, { broken: true }],
-        threads: [t, { id: "half-a-thread" }],
-        posts: [
-          { id: "po1", threadId: "t1", author: "gpt-5.6", body: "no attachments field", createdAt: 3 },
-          { id: "po2", threadId: "gone-thread", author: "user", body: "orphan", createdAt: 4, attachments: [] },
-          { id: "truncated" },
-        ],
-        events: [
-          { id: "ev1", threadId: "t1", actor: "user", type: "priority", payload: { from: "none", to: "high" }, at: 5 },
-          { id: "ev2", threadId: "t1", actor: "user", type: "created", at: 6 },
-        ],
-        sessions: [{ id: "s1", threadId: "t1", handle: "gpt-5.6", state: "running", startedAt: 7 }],
-      }),
-    );
+    const parsed = {
+      projects: [{ id: "p1", key: "ENG", name: "Engram", repoPath: "/x", color: "#fff", createdAt: 1 }],
+      roster: [{ handle: "gpt-5.6", harness: "codex", color: "#0f9d8f" }, { broken: true }],
+      threads: [t, { id: "half-a-thread" }],
+      posts: [
+        { id: "po1", threadId: "t1", author: "gpt-5.6", body: "no attachments field", createdAt: 3 },
+        { id: "po2", threadId: "gone-thread", author: "user", body: "orphan", createdAt: 4, attachments: [] },
+        { id: "truncated" },
+      ],
+      events: [
+        { id: "ev1", threadId: "t1", actor: "user", type: "priority", payload: { from: "none", to: "high" }, at: 5 },
+        { id: "ev2", threadId: "t1", actor: "user", type: "created", at: 6 },
+      ],
+      sessions: [{ id: "s1", threadId: "t1", handle: "gpt-5.6", state: "running", startedAt: 7 }],
+    } as unknown as Partial<BoardState>;
 
-    let store: ReturnType<typeof createLocalStore> | undefined;
+    let state: BoardState | undefined;
     expect(() => {
-      store = createLocalStore();
+      state = normalizeState(parsed);
     }).not.toThrow();
-    const state = store!.getState();
 
     // Valid records survive; malformed ones drop; missing fields default.
-    expect(state.threads.map((x) => x.id)).toEqual(["t1"]);
-    expect(state.roster).toHaveLength(1);
-    expect(state.posts).toHaveLength(1);
-    expect(state.posts[0].attachments).toEqual([]); // the crash vector
-    expect(state.posts[0].kind).toBe("comment");
-    expect(state.events.map((e) => e.id)).toEqual(["ev1", "ev2"]); // stale type kept, payload defaulted
-    expect(state.events[1].payload).toEqual({});
-    expect(state.sessions).toHaveLength(1);
+    expect(state!.threads.map((x) => x.id)).toEqual(["t1"]);
+    expect(state!.roster).toHaveLength(1);
+    expect(state!.posts).toHaveLength(1);
+    expect(state!.posts[0].attachments).toEqual([]); // the crash vector
+    expect(state!.posts[0].kind).toBe("comment");
+    expect(state!.events.map((e) => e.id)).toEqual(["ev1", "ev2"]); // stale type kept, payload defaulted
+    expect(state!.events[1].payload).toEqual({});
+    expect(state!.sessions).toHaveLength(1);
   });
 });
