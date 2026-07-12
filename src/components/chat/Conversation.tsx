@@ -138,7 +138,7 @@ function CopyButton({ text }: { text: string }) {
     <button
       onClick={copy}
       aria-label={copied ? "Copied" : "Copy message"}
-      className="flex size-6 cursor-pointer items-center justify-center rounded-md text-muted-foreground/70 transition-[color,background-color,transform] duration-100 hover:bg-hover hover:text-foreground active:scale-95"
+      className="flex size-6 cursor-pointer items-center justify-center rounded-md text-muted-foreground/70 transition-[color,background-color,transform] duration-100 hover:bg-hover hover:text-foreground active:scale-[0.96]"
     >
       {copied ? <IconCheck size={13} /> : <IconCopy size={13} />}
     </button>

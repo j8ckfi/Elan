@@ -183,7 +183,7 @@ function FilePreviewTile({ file, onRemove, size }: FilePreviewTileProps) {
           // of theme — the close badge needs to read as a "delete affordance"
           // over arbitrary image/PDF content, so it sits at a fixed contrast
           // instead of flipping with the surrounding surface.
-          className="absolute top-1 right-1 w-5 h-5 rounded-full bg-neutral-900 text-white opacity-0 group-hover/tile:opacity-100 transition-opacity duration-80 flex items-center justify-center cursor-pointer outline-none focus-visible:opacity-100 focus-visible:ring-1 focus-visible:ring-[color:var(--focus-ring,#6B97FF)]"
+          className="absolute top-1 right-1 w-5 h-5 rounded-full bg-neutral-900 text-white opacity-0 group-hover/tile:opacity-100 transition-opacity duration-80 flex items-center justify-center cursor-pointer outline-none focus-visible:opacity-100 focus-visible:ring-1 focus-visible:ring-[color:var(--focus-ring)]"
         >
           <XIcon size={12} strokeWidth={2.5} />
         </button>
@@ -259,7 +259,7 @@ function QueuedRow({
         "group/qrow flex h-8 items-center gap-2 rounded-lg bg-muted px-2.5",
         "text-[13px] text-foreground/85 select-none outline-none",
         "cursor-grab active:cursor-grabbing",
-        "focus-visible:ring-1 focus-visible:ring-[color:var(--focus-ring,#6B97FF)]"
+        "focus-visible:ring-1 focus-visible:ring-[color:var(--focus-ring)]"
       )}
       style={{ fontVariationSettings: fontWeights.normal }}
     >
@@ -292,7 +292,7 @@ function QueuedRow({
               ? "opacity-100"
               : "opacity-0 group-hover/qrow:opacity-100 focus-visible:opacity-100",
             "transition-opacity duration-80 cursor-pointer outline-none",
-            "focus-visible:ring-1 focus-visible:ring-[color:var(--focus-ring,#6B97FF)]"
+            "focus-visible:ring-1 focus-visible:ring-[color:var(--focus-ring)]"
           )}
         >
           <XIcon size={13} strokeWidth={2.5} />
@@ -419,7 +419,7 @@ const InputMessage = forwardRef<HTMLDivElement, InputMessageProps>(
     // `shadow-surface-2` supplies the resting edge.
     const EDGE_DROP = "0 1px 1px -0.5px var(--shadow-color)";
     const edgeShadow = dragOver
-      ? `0 0 0 1px #6B97FF, ${EDGE_DROP}`
+      ? `0 0 0 1px var(--focus-ring), ${EDGE_DROP}`
       : focusVisible
         ? `0 0 0 1px color-mix(in oklab, var(--foreground) 20%, transparent), ${EDGE_DROP}`
         : hovered && clickToFocus && !disabled

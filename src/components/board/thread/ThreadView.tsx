@@ -51,11 +51,11 @@ export function ThreadView({ threadId }: { threadId: string }) {
         <div className="relative min-h-0 min-w-0 flex-1">
           <div className="absolute inset-0 overflow-y-auto">
             <div className="mx-auto w-full max-w-[44rem] px-10 pb-28">
-              <h1 className="mt-6 text-[21px] font-semibold leading-snug text-foreground">
+              <h1 className="mt-6 text-[21px] font-semibold leading-[1.15] text-balance text-foreground">
                 {thread.title}
               </h1>
               {thread.body.trim().length > 0 && (
-                <div className="mt-3 [&_.mari-md]:text-[13px] [&_.mari-md]:leading-[1.6] [&_.mari-md]:text-foreground/85">
+                <div className="mt-3 text-pretty [&_.mari-md]:text-[13px] [&_.mari-md]:leading-[1.6] [&_.mari-md]:text-foreground/85">
                   <Markdown>{emphasizeMentions(thread.body, board.roster)}</Markdown>
                 </div>
               )}

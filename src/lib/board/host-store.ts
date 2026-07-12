@@ -121,7 +121,13 @@ function pruneSessionLineBuffers(state: BoardState): void {
 // Mirrors store.ts's palette — duplicated, not imported: this store doesn't
 // share createBoardStore, and the guess only has to survive until the
 // host's own (authoritative) color assignment arrives over WS.
-const PROJECT_COLORS = ["#5e6ad2", "#7c6df2", "#0f9d8f", "#d97706", "#b5487a"];
+const PROJECT_COLORS = [
+  "oklch(0.567 0.159 275.206)",
+  "oklch(0.616 0.192 284.352)",
+  "oklch(0.626 0.109 183.677)",
+  "oklch(0.666 0.157 58.318)",
+  "oklch(0.561 0.151 354.480)",
+];
 
 // Same shape as store.ts's deriveKey — see that file for the rationale.
 // Only used for the optimistic guess; the POST body carries the caller's

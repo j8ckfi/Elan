@@ -35,7 +35,7 @@ function Pre(props: ComponentProps<"pre">) {
         aria-label={copied ? "Copied" : "Copy code"}
         className={cn(
           "absolute top-1.5 right-1.5 flex size-6 cursor-pointer items-center justify-center rounded-md",
-          "text-foreground/50 hover:bg-foreground/10 hover:text-foreground/90 active:scale-95",
+          "text-foreground/50 hover:bg-foreground/10 hover:text-foreground/90 active:scale-[0.96]",
           "transition-[color,background-color,opacity,transform] duration-100",
           "opacity-0 group-hover/pre:opacity-100 focus-visible:opacity-100",
           copied && "opacity-100 text-foreground/90",

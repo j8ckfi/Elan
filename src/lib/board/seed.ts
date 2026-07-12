@@ -29,12 +29,12 @@ const DAY = 24 * HOUR;
  *  not the roster). Also used by seedState. */
 export function defaultRoster(): RosterEntry[] {
   return [
-    { handle: "fable-5", harness: "claude-code", color: "#7c6df2" },
-    { handle: "gpt-5.6", harness: "codex", color: "#0f9d8f" },
-    { handle: "grok-4.5", harness: "grok", color: "#d97706" },
+    { handle: "fable-5", harness: "claude-code", color: "oklch(0.616 0.192 284.352)" },
+    { handle: "gpt-5.6", harness: "codex", color: "oklch(0.626 0.109 183.677)" },
+    { handle: "grok-4.5", harness: "grok", color: "oklch(0.666 0.157 58.318)" },
     // The mock harness: a real local process that drives the elan CLI —
     // the full loop with zero credentials. The Welcome demo's "try it".
-    { handle: "demo-bot", harness: "mock", color: "#8b8d98" },
+    { handle: "demo-bot", harness: "mock", color: "oklch(0.645 0.016 277.700)" },
   ];
 }
 
@@ -61,7 +61,7 @@ export function seedState(): BoardState {
     key: "ENG",
     name: "Engram",
     repoPath: "/Users/j8ck/engram",
-    color: "#7c6df2",
+    color: "oklch(0.616 0.192 284.352)",
     createdAt: ago(30 * DAY),
   };
   const elan: Project = {
@@ -69,7 +69,7 @@ export function seedState(): BoardState {
     key: "ELN",
     name: "Elan",
     repoPath: "/Users/j8ck/ElanOrchestrator",
-    color: "#5e6ad2",
+    color: "oklch(0.567 0.159 275.206)",
     createdAt: ago(25 * DAY),
   };
   const projects: Project[] = [engram, elan];

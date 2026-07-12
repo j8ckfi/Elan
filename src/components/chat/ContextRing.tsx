@@ -58,7 +58,7 @@ export function ContextRing({
     <TooltipPrimitive.Root>
       <TooltipPrimitive.Trigger
         aria-label={`Context ${Math.round(pct)}% used`}
-        className="flex h-7 w-7 items-center justify-center rounded-full text-muted-foreground transition-[transform,background-color,color] duration-100 ease-[cubic-bezier(0.23,1,0.32,1)] hover:bg-hover active:scale-90"
+        className="flex h-7 w-7 items-center justify-center rounded-full text-muted-foreground transition-[transform,background-color,color] duration-100 ease-[cubic-bezier(0.23,1,0.32,1)] hover:bg-hover active:scale-[0.96]"
       >
         <svg
           width={SIZE}

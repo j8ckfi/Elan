@@ -213,7 +213,7 @@ function CommentBlock({
             className={cn(
               "min-w-0 max-w-[85%] rounded-[10px] px-3.5 py-2",
               "[&_.mari-md]:text-[13px] [&_.mari-md]:leading-[1.55]",
-              isResolution ? "bg-accent" : "bg-secondary",
+              isResolution ? "bg-accent shadow-surface-1" : "bg-secondary shadow-surface-1",
             )}
           >
             {isResolution && (
@@ -224,7 +224,7 @@ function CommentBlock({
             )}
             <Markdown>{emphasizeMentions(post.body, roster)}</Markdown>
           </div>
-          <span className="shrink-0 pb-0.5 text-[12px] text-muted-foreground">
+          <span className="shrink-0 pb-0.5 text-[12px] tabular-nums text-muted-foreground">
             {relativeTime(post.createdAt)}
           </span>
         </div>
@@ -271,7 +271,7 @@ function CommentBlock({
             </span>
           )}
           {/* Timestamps ride the hover — the ledger reads by rhythm, not clock. */}
-          <span className="shrink-0 text-[12px] text-muted-foreground opacity-0 transition-opacity duration-150 group-hover/comment:opacity-100">
+          <span className="shrink-0 text-[12px] tabular-nums text-muted-foreground opacity-0 transition-opacity duration-150 group-hover/comment:opacity-100">
             {relativeTime(post.createdAt)}
           </span>
         </div>
@@ -324,8 +324,9 @@ function HoverActions({ onReply, onResolve }: { onReply?: () => void; onResolve?
           type="button"
           onClick={onReply}
           className={cn(
-            "rounded-md border border-border bg-background px-2 py-0.5 text-[11.5px] text-muted-foreground",
-            "transition-colors hover:bg-hover hover:text-foreground",
+            "relative rounded-md border border-border bg-background px-2 py-0.5 text-[11.5px] text-muted-foreground",
+            "transition-[color,background-color,transform] hover:bg-hover hover:text-foreground active:scale-[0.96]",
+            "before:absolute before:inset-[-10px] before:content-['']",
           )}
         >
           Reply
@@ -336,8 +337,9 @@ function HoverActions({ onReply, onResolve }: { onReply?: () => void; onResolve?
           type="button"
           onClick={onResolve}
           className={cn(
-            "inline-flex items-center gap-1 rounded-md border border-border bg-background px-2 py-0.5 text-[11.5px] text-muted-foreground",
-            "transition-colors hover:bg-hover hover:text-foreground",
+            "relative inline-flex items-center gap-1 rounded-md border border-border bg-background px-2 py-0.5 text-[11.5px] text-muted-foreground",
+            "transition-[color,background-color,transform] hover:bg-hover hover:text-foreground active:scale-[0.96]",
+            "before:absolute before:inset-[-10px] before:content-['']",
           )}
         >
           <FlagGlyph size={10} />

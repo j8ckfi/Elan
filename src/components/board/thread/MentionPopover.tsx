@@ -29,7 +29,7 @@ export function MentionPopover({
   const shown = open && entries.length > 0;
 
   return (
-    <AnimatePresence>
+    <AnimatePresence initial={false}>
       {shown && (
         <motion.div
           role="listbox"

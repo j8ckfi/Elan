@@ -47,7 +47,14 @@ function harnessName(id: string): string {
 }
 
 // Mirrors the seed's roster tints; only the initials fallback ever shows it.
-const AGENT_COLORS = ["#7c6df2", "#0f9d8f", "#d97706", "#b5487a", "#5e6ad2", "#8b8d98"];
+const AGENT_COLORS = [
+  "oklch(0.616 0.192 284.352)",
+  "oklch(0.626 0.109 183.677)",
+  "oklch(0.666 0.157 58.318)",
+  "oklch(0.561 0.151 354.480)",
+  "oklch(0.567 0.159 275.206)",
+  "oklch(0.645 0.016 277.700)",
+];
 
 // ── Handle grammar ─────────────────────────────────────────────────────────
 // Handles must match the mention grammar (types.ts parseMentions):
@@ -209,7 +216,7 @@ export function RosterEditor({
             className={cn(
               "rounded-md bg-foreground px-3.5 py-1.5 text-[13px] font-medium text-background",
               "transition-[opacity,transform] duration-100 ease-[cubic-bezier(0.23,1,0.32,1)]",
-              "hover:opacity-90 active:scale-97",
+              "hover:opacity-90 active:scale-[0.96]",
             )}
           >
             Start working
@@ -427,7 +434,7 @@ function DetectionRow({
   // roster — detection rows have no real roster entry to point at. pi/pool
   // have no brand mark and land on the initials circle, deliberately.
   const markRoster = useMemo<RosterEntry[]>(
-    () => [{ handle: row.id, harness: row.id, color: "#8b8d98" }],
+    () => [{ handle: row.id, harness: row.id, color: "oklch(0.645 0.016 277.700)" }],
     [row.id],
   );
 

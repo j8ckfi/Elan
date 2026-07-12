@@ -22,7 +22,7 @@ interface SendButtonProps {
 const BASE =
   "relative flex h-9 w-9 items-center justify-center rounded-full outline-none " +
   "transition-[transform,background-color,color] duration-100 ease-[cubic-bezier(0.23,1,0.32,1)] " +
-  "active:scale-[0.92] focus-visible:ring-2 focus-visible:ring-ring/70 " +
+  "active:scale-[0.96] focus-visible:ring-2 focus-visible:ring-ring/70 " +
   "disabled:cursor-default";
 
 export function SendButton({

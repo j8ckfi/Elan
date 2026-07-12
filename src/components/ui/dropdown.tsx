@@ -150,7 +150,7 @@ const Dropdown = forwardRef<HTMLDivElement, DropdownProps>(
           {...props}
         >
           {/* Selected background */}
-          <AnimatePresence>
+          <AnimatePresence initial={false}>
             {checkedRect && (
               <motion.div
                 className={`absolute ${shape.bg} bg-active pointer-events-none`}
@@ -172,7 +172,7 @@ const Dropdown = forwardRef<HTMLDivElement, DropdownProps>(
           </AnimatePresence>
 
           {/* Hover background */}
-          <AnimatePresence>
+          <AnimatePresence initial={false}>
             {activeRect && (
               <motion.div
                 key={sessionRef.current}
@@ -201,10 +201,10 @@ const Dropdown = forwardRef<HTMLDivElement, DropdownProps>(
           </AnimatePresence>
 
           {/* Focus ring */}
-          <AnimatePresence>
+          <AnimatePresence initial={false}>
             {focusRect && (
               <motion.div
-                className={`absolute ${shape.focusRing} pointer-events-none z-20 border border-[color:var(--focus-ring,#6B97FF)]`}
+                className={`absolute ${shape.focusRing} pointer-events-none z-20 border border-[color:var(--focus-ring)]`}
                 initial={false}
                 animate={{
                   left: focusRect.left - 2,
@@ -534,7 +534,7 @@ const DropdownContent = forwardRef<HTMLDivElement, DropdownContentProps>(
                 )}
               >
                 {/* Selected background */}
-                <AnimatePresence>
+                <AnimatePresence initial={false}>
                   {checkedRect && (
                     <motion.div
                       className={`absolute ${shape.bg} bg-active pointer-events-none`}
@@ -556,7 +556,7 @@ const DropdownContent = forwardRef<HTMLDivElement, DropdownContentProps>(
                 </AnimatePresence>
 
                 {/* Hover background */}
-                <AnimatePresence>
+                <AnimatePresence initial={false}>
                   {activeRect && (
                     <motion.div
                       key={sessionRef.current}
@@ -585,10 +585,10 @@ const DropdownContent = forwardRef<HTMLDivElement, DropdownContentProps>(
                 </AnimatePresence>
 
                 {/* Focus ring */}
-                <AnimatePresence>
+                <AnimatePresence initial={false}>
                   {focusRect && (
                     <motion.div
-                      className={`absolute ${shape.focusRing} pointer-events-none z-20 border border-[color:var(--focus-ring,#6B97FF)]`}
+                      className={`absolute ${shape.focusRing} pointer-events-none z-20 border border-[color:var(--focus-ring)]`}
                       initial={false}
                       animate={{
                         left: focusRect.left - 2,

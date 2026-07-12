@@ -426,7 +426,7 @@ function TitleBar({ onNewThread }: { onNewThread: () => void }) {
         className={cn(
           "flex size-7 shrink-0 items-center justify-center rounded-md text-foreground/65",
           "transition-[opacity,transform,background-color] duration-200 ease-[cubic-bezier(0.23,1,0.32,1)]",
-          "hover:bg-hover hover:text-foreground active:scale-95",
+          "hover:bg-hover hover:text-foreground active:scale-[0.96]",
           collapsed
             ? "translate-x-0 opacity-100"
             : "pointer-events-none -translate-x-1 opacity-0",

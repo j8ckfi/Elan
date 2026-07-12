@@ -247,7 +247,7 @@ describe("createProject", () => {
   test("assigns rotating colors and returns a usable project", () => {
     const store = createLocalStore();
     const p = store.createProject({ name: "Solo", repoPath: "/s" });
-    expect(p.color).toMatch(/^#/);
+    expect(p.color).toMatch(/^oklch\(/);
     const thread = store.createThread({ projectId: p.id, title: "first", body: "" });
     expect(thread.number).toBe(1);
     expect(store.getState().projects).toHaveLength(1);

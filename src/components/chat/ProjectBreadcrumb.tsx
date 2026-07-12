@@ -87,7 +87,7 @@ export function ProjectBreadcrumb({
             "flex shrink-0 items-center gap-1.5 rounded-md px-1.5 py-1 outline-none",
             "text-foreground/55 transition-[transform,color,background-color] duration-100",
             "ease-[cubic-bezier(0.23,1,0.32,1)] hover:bg-hover hover:text-foreground/85",
-            "active:scale-[0.97] data-[popup-open]:bg-hover data-[popup-open]:text-foreground/85",
+            "active:scale-[0.96] data-[popup-open]:bg-hover data-[popup-open]:text-foreground/85",
           )}
         >
           <IconFolder size={14} className="shrink-0" />

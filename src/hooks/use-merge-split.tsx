@@ -328,7 +328,7 @@ export function SelectionBackgrounds({
   dimmed: boolean;
 }) {
   return (
-    <AnimatePresence>
+    <AnimatePresence initial={false}>
       {blocks.map((b) => {
         const corner = b.delayCorners
           ? { ...mergeSpring, delay: b.cornerDelay ?? cornerDelay }
