@@ -9,6 +9,7 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
+    "build:host": "bun build --compile dev/elan-host.ts --outfile src-tauri/binaries/elan-host-$(rustc -vV | sed -n 's/host: //p')",
     "test": "bun test tests",
     "e2e": "playwright test"
   },

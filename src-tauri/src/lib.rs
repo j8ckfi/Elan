@@ -1,5 +1,6 @@
 #[cfg(target_os = "macos")]
 mod glass;
+mod host;
 mod pi;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -11,6 +12,7 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .setup(|app| {
             pi::init(app.handle());
+            host::init(app.handle());
             #[cfg(target_os = "macos")]
             {
                 use tauri::Manager;
@@ -29,6 +31,11 @@ pub fn run() {
             pi::pi_delete_session,
             pi::pi_rename_session
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app, event| {
+            if let tauri::RunEvent::Exit = event {
+                host::shutdown(app);
+            }
+        });
 }

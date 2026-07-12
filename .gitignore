@@ -28,3 +28,6 @@ test-results
 playwright-report
 .elan/
 .elan-e2e/
+
+# Bundled host sidecar (built by `bun run build:host`)
+src-tauri/binaries/
