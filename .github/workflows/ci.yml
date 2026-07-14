@@ -28,9 +28,17 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
+      # tauri.conf.json's `externalBin` makes the crate's build script resolve
+      # the host sidecar, and the binaries are gitignored — so without this,
+      # cargo can't even check the crate ("resource path
+      # binaries/elan-host-… doesn't exist"). No `bun install` needed: the
+      # host bundle has no npm dependencies.
+      - name: Build host sidecar
+        run: bun run build:host
       - name: cargo check
         run: cargo check --manifest-path src-tauri/Cargo.toml
