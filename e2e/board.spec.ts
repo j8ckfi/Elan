@@ -312,7 +312,9 @@ test("draft: created on first keystroke, survives close; untouched draft discard
   await expect(page.locator("h1 + span")).toHaveText(FIXTURE_THREAD_COUNT);
 
   // "New thread" opens a fresh selected tab with the ghost title focused.
-  await page.getByRole("button", { name: "New thread", exact: true }).click();
+  // Two affordances share the name (the tab strip's + and the list header's);
+  // .first() is the tab strip's, which renders before the content pane.
+  await page.getByRole("button", { name: "New thread", exact: true }).first().click();
   await expect(page.getByRole("tab")).toHaveCount(2);
   await expect(page.getByRole("tab", { name: /New thread/ })).toHaveAttribute(
     "aria-selected",
@@ -336,7 +338,7 @@ test("draft: created on first keystroke, survives close; untouched draft discard
   await expect(page.locator("h1 + span")).toHaveText("5");
 
   // A second draft closed untouched is a discard — nothing new appears.
-  await page.getByRole("button", { name: "New thread", exact: true }).click();
+  await page.getByRole("button", { name: "New thread", exact: true }).first().click();
   await expect(page.getByPlaceholder("New thread")).toBeFocused();
   await page.getByRole("button", { name: "Close New thread" }).click();
   await expect(page.getByRole("tab")).toHaveCount(1);

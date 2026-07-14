@@ -3,6 +3,7 @@
 // See docs/FRONTEND.md "Thread list".
 
 import { useMemo } from "react";
+import { IconPlus } from "@tabler/icons-react";
 import { AvatarStack } from "@/components/board/glyphs";
 import { useBoard } from "@/lib/board/useBoard";
 import { relativeTime } from "@/lib/relative-time";
@@ -68,15 +69,21 @@ export function ThreadList({ mode, projectId, onOpenThread, onNewThread }: Threa
           <h1 className="text-[13px] font-medium text-foreground">{viewName}</h1>
           <span className="text-[12px] tabular-nums text-muted-foreground">{threads.length}</span>
         </div>
+        {/* Bare +, matching the tab strip's new-tab affordance: a bordered
+            label never fit this 32px header, and the row already reads as
+            "list of threads" without one spelling it out. */}
         <button
           onClick={() => onNewThread(mode === "project" ? projectId : undefined)}
+          aria-label="New thread"
+          title="New thread"
           className={cn(
-            "rounded-md border border-border px-2.5 py-1 text-[13px] text-foreground/80",
-            "transition-colors duration-100 ease-[cubic-bezier(0.23,1,0.32,1)]",
+            "-mr-1 flex size-6 shrink-0 items-center justify-center rounded-md",
+            "text-muted-foreground transition-[background-color,color,transform]",
+            "duration-100 ease-[cubic-bezier(0.23,1,0.32,1)]",
             "hover:bg-hover hover:text-foreground active:scale-[0.96]",
           )}
         >
-          New thread
+          <IconPlus size={15} />
         </button>
       </header>
 
