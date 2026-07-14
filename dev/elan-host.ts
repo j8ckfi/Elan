@@ -82,7 +82,7 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import {
   createBoardStore,
   normalizeState,
@@ -166,7 +166,7 @@ export function migrateSessions(
 
   const groups = new Map<string, AgentSessionRecord[]>();
   for (const s of state.sessions) {
-    const k = `${s.threadId} ${s.handle}`;
+    const k = `${s.threadId}\x00${s.handle}`;
     const list = groups.get(k);
     if (list) list.push(s);
     else groups.set(k, [s]);
@@ -1672,8 +1672,15 @@ interface ChildInfo {
 }
 
 export function startHost(opts: StartHostOptions = {}): ElanHost {
-  const stateDir =
-    opts.stateDir ?? process.env.ELAN_STATE_DIR ?? join(process.cwd(), ".elan");
+  // Resolved to absolute, always: `${stateDir}/bin` goes on every spawned
+  // child's PATH, and children run with their project's repoPath as cwd — so
+  // a relative state dir (ELAN_STATE_DIR=.elan-e2e, say) would put a relative
+  // entry on PATH that resolves against the CHILD's cwd, silently breaking
+  // every `elan` call it makes. Resolve here, against the host's cwd, before
+  // anything derives a path from it.
+  const stateDir = resolve(
+    opts.stateDir ?? process.env.ELAN_STATE_DIR ?? join(process.cwd(), ".elan"),
+  );
   const requestedPort = opts.port ?? Number(process.env.ELAN_HOST_PORT ?? 4519);
   const stateFile = join(stateDir, "board.json");
   const shimDir = join(stateDir, "bin");
@@ -3219,6 +3226,31 @@ export function startHost(opts: StartHostOptions = {}): ElanHost {
 }
 
 // ── auto-start (bun dev/elan-host.ts) ───────────────────────────────────────
+// Follow the process that spawned us down. The desktop app (src-tauri's
+// host.rs) kills its host child on RunEvent::Exit, but that only fires on a
+// graceful quit — a crash or `kill -9` bypasses it and would strand us here
+// holding :4519 forever, reparented to init.
+//
+// ONLY ever armed when ELAN_OWNER_PID is set, which only the app sets: a
+// hand-started `bun dev/elan-host.ts` has no owner and must never decide to
+// exit on its own.
+function watchOwner(pid: number, onGone: () => void): void {
+  const timer = setInterval(() => {
+    try {
+      // Signal 0 tests for liveness without delivering anything.
+      process.kill(pid, 0);
+    } catch (err) {
+      // EPERM means the pid IS alive, we just don't own it — not our cue to
+      // leave. Only ESRCH (no such process) means the owner is really gone.
+      if ((err as NodeJS.ErrnoException).code === "EPERM") return;
+      clearInterval(timer);
+      onGone();
+    }
+  }, 2000);
+  // Never let the watchdog itself hold the process open.
+  timer.unref?.();
+}
+
 if (import.meta.main) {
   const host = startHost();
   // Ctrl-C must reap child sessions and flush the debounced persist (rule 8).
@@ -3228,4 +3260,12 @@ if (import.meta.main) {
   };
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);
+
+  const ownerPid = Number(process.env.ELAN_OWNER_PID);
+  if (Number.isInteger(ownerPid) && ownerPid > 0) {
+    watchOwner(ownerPid, () => {
+      console.log(`[host] owner pid ${ownerPid} is gone — shutting down`);
+      shutdown();
+    });
+  }
 }

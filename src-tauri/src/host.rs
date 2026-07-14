@@ -108,6 +108,7 @@ fn spawn(_app: &AppHandle) -> std::io::Result<std::process::Child> {
     Command::new("bun")
         .arg("dev/elan-host.ts")
         .current_dir(&repo_root)
+        .env("ELAN_OWNER_PID", std::process::id().to_string())
         .stdin(Stdio::null())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
@@ -133,6 +134,7 @@ fn spawn(app: &AppHandle) -> std::io::Result<std::process::Child> {
 
     Command::new(&bin)
         .env("ELAN_STATE_DIR", &state_dir)
+        .env("ELAN_OWNER_PID", std::process::id().to_string())
         .stdin(Stdio::null())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
@@ -141,6 +143,10 @@ fn spawn(app: &AppHandle) -> std::io::Result<std::process::Child> {
 
 /// Kill the host we spawned, on app exit. Adopted hosts (we never stored a
 /// child for them) are left alone — we didn't start them, we don't stop them.
+///
+/// This is the graceful half of the contract: `RunEvent::Exit` doesn't fire
+/// when the app dies by signal, so the host also watches ELAN_OWNER_PID (set
+/// in `spawn` above) and exits on its own if we vanish without calling this.
 pub fn shutdown(app: &AppHandle) {
     let Some(state) = app.try_state::<HostChild>() else {
         return;
