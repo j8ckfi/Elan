@@ -1,7 +1,7 @@
 {
   "name": "elan",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -9,7 +9,7 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
-    "build:host": "bun build --compile dev/elan-host.ts --outfile src-tauri/binaries/elan-host-$(rustc -vV | sed -n 's/host: //p')",
+    "build:host": "bun dev/build-host.ts",
     "test": "bun test tests",
     "e2e": "playwright test"
   },
