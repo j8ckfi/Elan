@@ -7,7 +7,6 @@ import {
   type CSSProperties,
   type ReactNode,
 } from "react";
-import { IconEdit } from "@tabler/icons-react";
 import { IconProvider } from "@/lib/icon-context";
 import {
   SidebarInset,
@@ -273,7 +272,7 @@ function App() {
       <SidebarProvider
         style={{ "--sidebar-width": `${sidebarWidth}px` } as CSSProperties}
       >
-        <TitleBar onNewThread={() => requestNewThread()} />
+        <TitleBar />
         <BoardSidebar
           selection={selection}
           activeThreadId={activeTab?.threadId}
@@ -290,6 +289,7 @@ function App() {
             activeKey={activeKey}
             onSelect={selectTab}
             onClose={closeTab}
+            onNewThread={() => requestNewThread()}
           />
           <ConnectionBanner />
           <BoardBoundary resetKey={activeKey + selectionKey(selection)}>
@@ -345,21 +345,29 @@ function TabRow({
   activeKey,
   onSelect,
   onClose,
+  onNewThread,
 }: {
   boardLabel: string;
   tabs: TabDescriptor[];
   activeKey: string;
   onSelect: (key: string) => void;
   onClose: (key: string) => void;
+  onNewThread: () => void;
 }) {
   const { state } = useSidebar();
   const collapsed = state === "collapsed";
-  const pl = collapsed ? trafficInset() + 66 : 12;
+  // Collapsed, the fixed cluster is one button wide (toggle only — the
+  // new-thread affordance lives with the tabs now).
+  const pl = collapsed ? trafficInset() + 36 : 12;
 
   return (
     <header
       data-tauri-drag-region="deep"
-      className="relative z-30 flex h-9 shrink-0 items-center pr-3 select-none"
+      className={cn(
+        // TITLE_BAR_H, shared with TitleBar so the toggle and the tabs sit on
+        // one center line (they were h-8 vs h-9 — a 2px offset).
+        "relative z-30 flex h-11 shrink-0 items-center pr-3 select-none",
+      )}
       style={{ paddingLeft: pl }}
     >
       <TabStrip
@@ -368,6 +376,7 @@ function TabRow({
         activeKey={activeKey}
         onSelect={onSelect}
         onClose={onClose}
+        onNewThread={onNewThread}
       />
     </header>
   );
@@ -413,35 +422,18 @@ function trafficInset(): number {
   return isDesktop ? 82 : 10;
 }
 
-// Fixed toggle cluster pinned beside the traffic lights (inherited from Mari):
-// sidebar toggle + new-thread, the latter fading in when the sidebar is closed.
-function TitleBar({ onNewThread }: { onNewThread: () => void }) {
-  const { state } = useSidebar();
-  const collapsed = state === "collapsed";
-
+// Fixed sidebar toggle pinned beside the traffic lights (inherited from Mari).
+// h-11 matches TabRow's header so the toggle, the traffic lights and the tabs
+// all share one center line. New-thread is NOT here: it's the browser-style +
+// after the last tab (see TabStrip).
+function TitleBar() {
   return (
     <div
       data-tauri-drag-region="deep"
-      className="fixed left-0 top-0 z-50 flex h-8 items-center gap-0.5 pr-2 select-none"
+      className="fixed left-0 top-0 z-50 flex h-11 items-center pr-2 select-none"
       style={{ paddingLeft: trafficInset() }}
     >
       <SidebarTrigger className="size-7 shrink-0 rounded-md text-foreground/65 hover:bg-hover hover:text-foreground [&_svg]:size-[16px]" />
-      <button
-        onClick={onNewThread}
-        aria-label="New thread"
-        aria-hidden={!collapsed}
-        tabIndex={collapsed ? 0 : -1}
-        className={cn(
-          "flex size-7 shrink-0 items-center justify-center rounded-md text-foreground/65",
-          "transition-[opacity,transform,background-color] duration-200 ease-[cubic-bezier(0.23,1,0.32,1)]",
-          "hover:bg-hover hover:text-foreground active:scale-[0.96]",
-          collapsed
-            ? "translate-x-0 opacity-100"
-            : "pointer-events-none -translate-x-1 opacity-0",
-        )}
-      >
-        <IconEdit size={16} />
-      </button>
     </div>
   );
 }

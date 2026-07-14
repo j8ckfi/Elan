@@ -5,7 +5,7 @@
 // runs, the animated gradient while a session works the thread.
 
 import { useMemo } from "react";
-import { IconInbox } from "@tabler/icons-react";
+import { IconInbox, IconPlus } from "@tabler/icons-react";
 import { GradientSpin } from "gradient-spin";
 import { TabsSubtle, TabsSubtleItem } from "@/components/ui/tabs-subtle";
 import type { IconComponentProps } from "@/lib/icon-map";
@@ -82,6 +82,7 @@ export function TabStrip({
   activeKey,
   onSelect,
   onClose,
+  onNewThread,
 }: {
   boardLabel: string;
   tabs: TabDescriptor[];
@@ -89,6 +90,8 @@ export function TabStrip({
   activeKey: string;
   onSelect: (key: string) => void;
   onClose: (key: string) => void;
+  /** The browser-style new-tab affordance, rendered after the last tab. */
+  onNewThread: () => void;
 }) {
   const selectedIndex =
     activeKey === "board" ? 0 : tabs.findIndex((t) => t.key === activeKey) + 1;
@@ -96,25 +99,44 @@ export function TabStrip({
   // Index-addressed API → key-addressed callbacks.
   const keys = useMemo(() => ["board", ...tabs.map((t) => t.key)], [tabs]);
 
+  // Browser grammar: the new-tab affordance rides immediately after the last
+  // tab (not pinned to the far edge), so it stays where the eye left off as
+  // tabs open and close. `min-w-0` on the strip lets it scroll; the + never
+  // shrinks.
   return (
-    <TabsSubtle
-      activeLabel
-      idPrefix="elan-tabs"
-      selectedIndex={selectedIndex < 0 ? 0 : selectedIndex}
-      onSelect={(i) => onSelect(keys[i] ?? "board")}
-      className="min-w-0"
-    >
-      <TabsSubtleItem index={0} icon={IconInbox} label={boardLabel} />
-      {tabs.map((t, i) => (
-        <TabsSubtleItem
-          key={t.key}
-          index={i + 1}
-          icon={threadIcon(t.running)}
-          label={t.title || "New thread"}
-          title={t.title || "New thread"}
-          onClose={() => onClose(t.key)}
-        />
-      ))}
-    </TabsSubtle>
+    <div className="flex min-w-0 items-center gap-1">
+      <TabsSubtle
+        activeLabel
+        idPrefix="elan-tabs"
+        selectedIndex={selectedIndex < 0 ? 0 : selectedIndex}
+        onSelect={(i) => onSelect(keys[i] ?? "board")}
+        className="min-w-0"
+      >
+        <TabsSubtleItem index={0} icon={IconInbox} label={boardLabel} />
+        {tabs.map((t, i) => (
+          <TabsSubtleItem
+            key={t.key}
+            index={i + 1}
+            icon={threadIcon(t.running)}
+            label={t.title || "New thread"}
+            title={t.title || "New thread"}
+            onClose={() => onClose(t.key)}
+          />
+        ))}
+      </TabsSubtle>
+      <button
+        onClick={onNewThread}
+        aria-label="New thread"
+        title="New thread"
+        className={cn(
+          "flex size-7 shrink-0 items-center justify-center rounded-md",
+          "text-muted-foreground transition-[background-color,color,transform]",
+          "duration-100 ease-[cubic-bezier(0.23,1,0.32,1)]",
+          "hover:bg-hover hover:text-foreground active:scale-[0.96]",
+        )}
+      >
+        <IconPlus size={15} />
+      </button>
+    </div>
   );
 }

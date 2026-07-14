@@ -159,7 +159,12 @@ export function ThreadComposer({ threadId, roster, mode, onModeChange }: ThreadC
         onSelect={insertMention}
         onHover={setActiveIndex}
       />
-      <div className="rounded-lg shadow-surface-2">
+      {/* Fill, not just an edge: shadow-surface-2's ring is a 2%-alpha white
+          hairline in dark mode, so a transparent composer sat page-coloured
+          and read as invisible. bg-surface-2 lifts it off the page (dark
+          0.235 vs 0.168); in light mode 0.991 vs 0.994 is a no-op and the
+          ring still does the work. */}
+      <div className="rounded-lg bg-surface-2 shadow-surface-2">
         <div className="flex gap-2.5 px-3 py-2.5">
           <div className="min-w-0 flex-1">
             {mode.kind !== "comment" && (

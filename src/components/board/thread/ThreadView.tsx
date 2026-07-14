@@ -50,7 +50,10 @@ export function ThreadView({ threadId }: { threadId: string }) {
       <div className="flex min-h-0 flex-1 @container">
         <div className="relative min-h-0 min-w-0 flex-1">
           <div className="absolute inset-0 overflow-y-auto">
-            <div className="mx-auto w-full max-w-[44rem] px-10 pb-28">
+            {/* pb clears the whole bottom band — the h-14 fade + the composer
+                + its pb-4 — with room to spare, so the last post comes to rest
+                ABOVE the gradient instead of dissolving into it. */}
+            <div className="mx-auto w-full max-w-[44rem] px-10 pb-44">
               <h1 className="mt-6 text-[19px] font-semibold leading-[1.15] text-balance text-foreground">
                 {thread.title}
               </h1>
@@ -77,8 +80,12 @@ export function ThreadView({ threadId }: { threadId: string }) {
             </div>
           </div>
 
-          {/* Same plane as the feed: soft fade + the input card, no dock chrome. */}
-          <div className="pointer-events-none absolute inset-x-0 bottom-0">
+          {/* Same plane as the feed: soft fade + the input card, no dock chrome.
+              z-20 because the feed's thinking-steps rows are `relative z-10`
+              (ui/thinking-steps.tsx) and the scrollport — absolute, z-auto —
+              raises no stacking context of its own, so without this they paint
+              straight over the composer. */}
+          <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20">
             <div
               aria-hidden
               className="h-14 bg-gradient-to-b from-transparent via-background/80 to-background"

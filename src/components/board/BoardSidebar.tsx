@@ -114,9 +114,10 @@ export function BoardSidebar({
     >
       {/* No wordmark — the user knows what app they're in. The header keeps
           the traffic-light inset only. */}
-      <SidebarHeader className="px-2 pt-9 pb-1" />
+      {/* pt-11 clears the fixed TitleBar (App.tsx) — keep in sync with it. */}
+      <SidebarHeader className="px-3 pt-11 pb-1" />
 
-      <SidebarContent className="gap-0.5 px-2 py-1">
+      <SidebarContent className="gap-0.5 px-3 py-1">
         <NavRow
           icon={IconInbox}
           label="Inbox"
@@ -157,11 +158,13 @@ export function BoardSidebar({
         )}
       </SidebarContent>
 
-      <SidebarFooter className="gap-0.5 px-1 pb-2">
+      {/* px-3 + the button's px-2.5 keeps Settings' hover rect and label on
+          the same left edge as the nav rows above. */}
+      <SidebarFooter className="gap-0.5 px-3 pb-2">
         <button
           onClick={onOpenSettings}
           className={cn(
-            "flex items-center gap-2 rounded-md px-2 py-1.5 text-[13px]",
+            "flex items-center gap-2 rounded-md px-2.5 py-1.5 text-[13px]",
             "text-sidebar-foreground/70",
             "transition-colors duration-100 ease-[cubic-bezier(0.23,1,0.32,1)]",
             "hover:bg-sidebar-accent hover:text-sidebar-foreground",

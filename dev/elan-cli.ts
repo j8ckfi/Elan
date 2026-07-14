@@ -12,6 +12,8 @@ const HELP = `elan — act on the Elan board from inside an agent session
   elan post <text…>                    top-level post; @handle mentions summon agents
   elan reply <post-id> <text…>         reply inside an exchange
   elan resolve <post-id> <text…>       file the ⚑ resolution that closes an exchange
+                                       (pass "-" as the text to read the body
+                                        from stdin — exact bytes, any length)
   elan attach <path> [--note <text…>]  register an artifact (+ optional note post)
   elan thread                          print the rendered thread context
   elan read <post-id>                  print the full exchange containing a post
@@ -61,6 +63,27 @@ async function api(method: string, path: string, body?: unknown): Promise<Respon
 const ts = (ms: number): string =>
   new Date(ms).toISOString().replace("T", " ").slice(0, 19);
 
+// Body text for post/reply/resolve. `-` reads stdin (exact bytes — the escape
+// hatch for anything the argv path would mangle); otherwise the words join up.
+async function bodyText(words: string[]): Promise<string> {
+  if (words.length === 1 && words[0] === "-") {
+    return (await new Response(Bun.stdin.stream()).text()).trim();
+  }
+  return softenNewlines(words.join(" ").trim());
+}
+
+// Agents reach for `elan post "para one\n\npara two"` by reflex, and the shell
+// hands that over as a literal backslash-n — which then renders as a visible
+// "\n" mid-sentence on the board. Interpret those escapes, but ONLY when the
+// text carries no real newline: a body that already has one came from an agent
+// that knows how to send them, so its bytes (a code sample containing a
+// literal \n, say) are passed through untouched. `elan post -` is the exact
+// path when this heuristic isn't wanted.
+function softenNewlines(text: string): string {
+  if (text.includes("\n")) return text;
+  return text.replace(/\\n/g, "\n");
+}
+
 async function addPost(extra: Record<string, unknown>, text: string): Promise<void> {
   const res = await api("POST", "/api/posts", {
     threadId: need("ELAN_THREAD"),
@@ -86,8 +109,8 @@ switch (verb) {
   }
 
   case "post": {
-    const text = rest.join(" ").trim();
-    if (!text) die("usage: elan post <text…>", 1);
+    const text = await bodyText(rest);
+    if (!text) die("usage: elan post <text…>   (or: elan post -  # body on stdin)", 1);
     await addPost({}, text);
     break;
   }
@@ -95,7 +118,7 @@ switch (verb) {
   case "reply":
   case "resolve": {
     const [postId, ...words] = rest;
-    const text = words.join(" ").trim();
+    const text = await bodyText(words);
     if (!postId || !text) die(`usage: elan ${verb} <post-id> <text…>`, 1);
     await addPost(
       verb === "resolve" ? { replyTo: postId, kind: "resolution" } : { replyTo: postId },
