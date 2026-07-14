@@ -415,11 +415,14 @@ class BoardBoundary extends Component<
   }
 }
 
-// The window's traffic-light inset in px (desktop only).
+// The window's traffic-light inset in px (desktop only) — the room the
+// sidebar toggle leaves for the lights. Paired with X_NUDGE in
+// src-tauri/src/trafficlights.rs, which shifts the lights right by 5: without
+// the matching 5 here the toggle would sit that much closer to them.
 function trafficInset(): number {
   const isDesktop =
     typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
-  return isDesktop ? 82 : 10;
+  return isDesktop ? 87 : 10;
 }
 
 // Fixed sidebar toggle pinned beside the traffic lights (inherited from Mari).

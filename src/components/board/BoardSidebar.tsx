@@ -254,8 +254,15 @@ function ProjectGroup({
 
   return (
     <div className="py-0.5">
+      {/* The highlight lives on the whole row — chevron included — not on the
+          name button alone, so selecting a project lights the disclosure arrow
+          with it. */}
       <div
-        className="group/proj relative flex items-center rounded-[5px] pr-1.5"
+        className={cn(
+          "group/proj relative flex items-center rounded-[5px] pr-1.5",
+          "transition-colors duration-100 ease-[cubic-bezier(0.23,1,0.32,1)]",
+          active ? "bg-sidebar-accent" : "hover:bg-hover",
+        )}
         onMouseEnter={() => setHovering(true)}
         onMouseLeave={() => setHovering(false)}
       >
@@ -275,11 +282,12 @@ function ProjectGroup({
         <button
           onClick={() => onSelect({ view: "project", projectId: project.id })}
           className={cn(
-            "flex h-[30px] min-w-0 flex-1 items-center gap-2 rounded-[5px] pr-1 text-[13px]",
+            // No background here — the row wrapper owns the highlight.
+            "flex h-[30px] min-w-0 flex-1 items-center gap-2 pr-1 text-[13px]",
             "transition-colors duration-100 ease-[cubic-bezier(0.23,1,0.32,1)]",
             active
-              ? "bg-sidebar-accent text-sidebar-foreground font-medium"
-              : "text-sidebar-foreground/85 hover:bg-hover",
+              ? "text-sidebar-foreground font-medium"
+              : "text-sidebar-foreground/85",
           )}
         >
           <span className="min-w-0 flex-1 truncate text-left">{project.name}</span>
