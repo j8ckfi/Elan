@@ -142,21 +142,34 @@ export the appearance you want straight from Icon Composer (File → Export,
 
 ## Releases & updates
 
-Auto-update = Tauri updater plugin + a signed GitHub Release carrying a
-`latest.json` manifest.
+Auto-update = Tauri updater plugin + a Developer ID-signed and notarized GitHub
+Release carrying a `latest.json` manifest.
 
 - Signing keypair: `bunx tauri signer generate`. **Public key →
   tauri.conf.json. Private key + password → GitHub repo secrets**
   (`TAURI_SIGNING_PRIVATE_KEY`, `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`) — set via
   `gh secret set`, never committed. Losing the key means users reinstall once.
-- **Cut a release:** bump the version in `package.json` **and**
-  `src-tauri/tauri.conf.json` (keep them in sync), then
-  `git tag vX.Y.Z && git push --tags`. `.github/workflows/release.yml`
-  (tauri-action) builds/signs/publishes. Watch with `gh run watch`.
-- **Not notarized** (deliberate, for now): first install needs right-click →
-  Open, and unsigned auto-updates can occasionally be re-quarantined by
-  Gatekeeper. If self-replace gets flaky, fall back to a "new version →
-  download" nudge until notarization is added.
+- Gatekeeper trust requires a paid Apple Developer account and a **Developer ID
+  Application** certificate. Apple credentials stay on the release Mac: the
+  signing identity is in the login Keychain and `notarytool` uses the Keychain
+  profile `elan-notary`. Do not export the identity, upload a `.p12`, or add
+  Apple credentials to GitHub. An Apple Development certificate or ad-hoc
+  signature is not sufficient for downloads.
+- **Build a release:** bump the version in `package.json`,
+  `src-tauri/tauri.conf.json`, and `src-tauri/Cargo.toml` (keep them in sync),
+  then run `.github/scripts/build-notarized-macos.sh`. It signs and notarizes
+  the app and DMG locally, staples both tickets, runs `codesign`, Gatekeeper
+  (`spctl`), and `stapler`, and creates the updater archive.
+- **Publish a release:** create a draft GitHub Release with the notarized DMG
+  and `Elan_universal.app.tar.gz`, then dispatch `.github/workflows/release.yml`
+  from `main` with its `vX.Y.Z` tag (`gh workflow run release.yml --ref main
+  -f tag=vX.Y.Z`). CI re-verifies both artifacts, signs the archive with the
+  existing Tauri updater secret, creates `latest.json`, and only then publishes
+  the release. Watch with `gh run watch`.
+- A team's first Developer ID submission can sit at `In Progress` for hours
+  with no log. Keep the original submission ID and poll `notarytool history`;
+  do not create a stream of duplicate submissions. Nothing may publish before
+  the accepted ticket is stapled and the verification script passes.
 
 ---
 

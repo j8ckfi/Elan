@@ -1,46 +1,151 @@
 name: Release
 
-# Cut a release by pushing a version tag:
-#   git tag vX.Y.Z && git push --tags
-# This builds a signed universal macOS bundle, publishes a GitHub Release, and
-# uploads latest.json (the updater manifest the app polls). Version in
-# package.json and src-tauri/tauri.conf.json must match the tag.
+# Apple signing and notarization happen locally with credentials stored in the
+# macOS Keychain. This workflow only verifies a prebuilt draft release, signs
+# the updater archive with the existing Tauri key, and publishes it.
 
 on:
-  push:
-    tags:
-      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Draft release tag (for example, v0.2.2)
+        required: true
+        type: string
+
+run-name: Release ${{ inputs.tag }}
 
 jobs:
-  release:
+  publish:
     permissions:
       contents: write
     runs-on: macos-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@v4
 
+      - name: Validate version and draft release
+        id: release
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag='${{ inputs.tag }}'
+          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            printf 'Expected a tag such as v0.2.2; got %s\n' "$tag" >&2
+            exit 1
+          fi
+
+          version="${tag#v}"
+          package_version="$(jq -r .version package.json)"
+          tauri_version="$(jq -r .version src-tauri/tauri.conf.json)"
+          cargo_version="$(sed -n '/^\[package\]$/,/^\[/s/^version = "\([^"]*\)"$/\1/p' src-tauri/Cargo.toml)"
+          lock_version="$(sed -n '/^name = "elan"$/,/^$/s/^version = "\([^"]*\)"$/\1/p' src-tauri/Cargo.lock)"
+          if [[ "$version" != "$package_version" || \
+                "$version" != "$tauri_version" || \
+                "$version" != "$cargo_version" || \
+                "$version" != "$lock_version" ]]; then
+            printf 'Version mismatch: tag=%s package=%s tauri=%s cargo=%s lock=%s\n' \
+              "$version" "$package_version" "$tauri_version" "$cargo_version" \
+              "$lock_version" >&2
+            exit 1
+          fi
+
+          gh release view "$tag" --json isDraft --jq '.isDraft' | grep -qx true || {
+            printf 'Release %s must exist and still be a draft\n' "$tag" >&2
+            exit 1
+          }
+
+          printf 'tag=%s\n' "$tag" >> "$GITHUB_OUTPUT"
+          printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
+
+      - name: Download notarized artifacts
+        shell: bash
+        run: |
+          mkdir release-assets
+          gh release download '${{ steps.release.outputs.tag }}' \
+            --dir release-assets \
+            --pattern '*.dmg' \
+            --pattern '*.app.tar.gz'
+
+      - name: Verify Developer ID signatures and notarization
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          dmgs=(release-assets/*.dmg)
+          archives=(release-assets/*.app.tar.gz)
+          if (( ${#dmgs[@]} != 1 || ${#archives[@]} != 1 )); then
+            printf 'Expected one DMG and one updater archive; found %d and %d\n' \
+              "${#dmgs[@]}" "${#archives[@]}" >&2
+            exit 1
+          fi
+
+          extracted="$RUNNER_TEMP/extracted-updater"
+          mkdir "$extracted"
+          tar -xzf "${archives[0]}" -C "$extracted"
+          apps=("$extracted"/*.app)
+          if (( ${#apps[@]} != 1 )); then
+            printf 'Expected one app in updater archive; found %d\n' "${#apps[@]}" >&2
+            exit 1
+          fi
+
+          bash .github/scripts/verify-macos-release.sh "${apps[0]}" "${dmgs[0]}"
+
       - uses: oven-sh/setup-bun@v2
 
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - name: Install release tooling
+        run: bun install --frozen-lockfile
 
-      - uses: swatinem/rust-cache@v2
-        with:
-          workspaces: src-tauri -> target
-
-      - run: bun install
-
-      - uses: tauri-apps/tauri-action@v0
+      - name: Sign updater archive
+        shell: bash
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Set via `gh secret set` — sign the update so the app trusts it.
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        with:
-          tagName: ${{ github.ref_name }}
-          releaseName: "Elan ${{ github.ref_name }}"
-          releaseBody: "Download the `.dmg` to install. Auto-updates handle subsequent versions."
-          releaseDraft: false
-          prerelease: false
-          args: --target universal-apple-darwin
+        run: |
+          set -euo pipefail
+          if [[ -z "${TAURI_SIGNING_PRIVATE_KEY:-}" ]]; then
+            printf 'TAURI_SIGNING_PRIVATE_KEY is required\n' >&2
+            exit 1
+          fi
+          archive=(release-assets/*.app.tar.gz)
+          bunx tauri signer sign "${archive[0]}"
+          test -s "${archive[0]}.sig"
+
+      - name: Create updater manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag='${{ steps.release.outputs.tag }}'
+          version='${{ steps.release.outputs.version }}'
+          archive=(release-assets/*.app.tar.gz)
+          signature="$(tr -d '\r\n' < "${archive[0]}.sig")"
+          url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${tag}/$(basename "${archive[0]}")"
+          pub_date="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+
+          jq -n \
+            --arg version "$version" \
+            --arg notes 'Download the `.dmg` to install. Auto-updates handle subsequent versions.' \
+            --arg pub_date "$pub_date" \
+            --arg signature "$signature" \
+            --arg url "$url" \
+            '{
+              version: $version,
+              notes: $notes,
+              pub_date: $pub_date,
+              platforms: {
+                "darwin-aarch64": {signature: $signature, url: $url},
+                "darwin-x86_64": {signature: $signature, url: $url},
+                "darwin-aarch64-app": {signature: $signature, url: $url},
+                "darwin-x86_64-app": {signature: $signature, url: $url}
+              }
+            }' > release-assets/latest.json
+          jq -e . release-assets/latest.json >/dev/null
+
+      - name: Publish verified release
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag='${{ steps.release.outputs.tag }}'
+          archive=(release-assets/*.app.tar.gz)
+          gh release upload "$tag" "${archive[0]}.sig" release-assets/latest.json --clobber
+          gh release edit "$tag" --draft=false --latest
