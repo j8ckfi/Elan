@@ -28,8 +28,9 @@ const FOLD_SLACK = 40;
 
 const authorName = (author: string) => (author === USER ? "You" : author);
 
-/** An agent post that @mentions the user — the feed's one emphasis device. */
-const addressesUser = (post: Post) =>
+/** An agent post that @mentions the user — the feed's one emphasis device.
+ *  Exported: Home's "For you" zone aggregates exactly these posts. */
+export const addressesUser = (post: Post) =>
   post.author !== USER && /(^|[^a-z0-9._-])@user\b/i.test(post.body);
 
 interface ExchangeBlockProps {

@@ -11,7 +11,8 @@
 // fixture (seedFixture below). Pure product-path tests (first run, project
 // creation, the draft flow, delete-project) start from an empty board.
 // The assertions come straight from docs/FRONTEND.md: First run, the tab row,
-// the draft page, the thread view. Orchestration is covered elsewhere.
+// Home (hero / for-you / folders), the draft page, the thread view.
+// Orchestration is covered elsewhere.
 
 import { mkdirSync } from "node:fs";
 import { expect, test, type Page } from "@playwright/test";
@@ -81,14 +82,15 @@ test.beforeEach(async ({ page }) => {
 
 // ── Fixture ───────────────────────────────────────────────────────────────
 // A compact hand-rolled BoardState: two projects, four threads, a resolved
-// agent-vs-agent exchange, and a bare thread with nothing but its "created"
-// event. Ids are stable slugs (not uuids) so the
-// tests below can reference them directly. Kept in sync with the shapes in
-// src/lib/board/types.ts by hand — this file doesn't import app source.
+// agent-vs-agent exchange, a post addressed to @user (Home's "For you"
+// zone), and a bare thread with nothing but its "created" event. Ids are
+// stable slugs (not uuids) so the tests below can reference them directly.
+// Kept in sync with the shapes in src/lib/board/types.ts by hand — this file
+// doesn't import app source.
 const FLAGSHIP = "Design the engram geometry experiment"; // ENG-1, resolved exchange
-const SECOND_THREAD = "Ship the CLI similarity command"; // ENG-2
+const SECOND_THREAD = "Ship the CLI similarity command"; // ENG-2, @user post
 const BARE_THREAD = "Write onboarding doc for engram schema"; // ENG-3, bare feed
-const FIXTURE_THREAD_COUNT = "4";
+const FOR_YOU_ASK = "Two similarity metrics tie — @user pick one before I wire it.";
 
 function buildFixture() {
   const NOW = Date.now();
@@ -200,6 +202,16 @@ function buildFixture() {
         kind: "resolution",
         attachments: [],
       },
+      // Addressed to @user and never answered — Home's "For you" zone.
+      {
+        id: "eng2-ask",
+        threadId: "thread-eng-2",
+        author: "gpt-5.6",
+        body: FOR_YOU_ASK,
+        createdAt: ago(20 * MIN),
+        kind: "comment",
+        attachments: [],
+      },
     ],
     events: [
       { id: "eng1-ev1", threadId: "thread-eng-1", actor: "user", type: "created", payload: {}, at: ago(3 * HOUR) },
@@ -213,25 +225,27 @@ function buildFixture() {
 
 /** Seeds the fixture onto the host over PUT /api/state, then reloads so the
  *  UI picks it up from the host's full-state push, and waits for the flagship
- *  thread to render. */
+ *  thread to render (folders default open, so its row is on Home). */
 async function seedFixture(page: Page) {
   await page.request.put(`${HOST_URL}/api/state`, { data: buildFixture() });
   await page.reload();
   await expect(page.getByText(FLAGSHIP)).toBeVisible();
 }
 
-/** Click a thread row on the board and wait for its thread view. */
+/** Click a thread row on Home and wait for its thread view. */
 async function openThread(page: Page, title: string) {
   await page.getByText(title).click();
   await expect(page.locator("h1")).toHaveText(title);
 }
 
 const composer = (page: Page) => page.getByPlaceholder("Send a message…");
-const sidebar = (page: Page) => page.locator('[data-slot="sidebar"]');
+const hero = (page: Page) => page.getByPlaceholder("What needs doing?");
+const folder = (page: Page, name: string) =>
+  page.locator('[data-slot="home-folder"]').filter({ hasText: name });
 
 // ── 1 · First run ─────────────────────────────────────────────────────────
 
-test("first run shows Welcome, one board tab, no demo data", async ({ page }) => {
+test("first run shows Welcome, one Home tab, no demo data", async ({ page }) => {
   // The pitch + the one call to action — the demo button is gone.
   await expect(
     page.getByText("An issue tracker where the assignees are your model subscriptions."),
@@ -240,33 +254,37 @@ test("first run shows Welcome, one board tab, no demo data", async ({ page }) =>
   await expect(page.getByRole("button", { name: "Explore the demo" })).toHaveCount(0);
   await expect(page.getByText("Explore the demo")).toHaveCount(0);
 
-  // Exactly one tab — the persistent board tab, following the Inbox selection.
+  // Exactly one tab — the persistent Home tab (there is no sidebar).
   await expect(page.getByRole("tab")).toHaveCount(1);
-  await expect(page.getByRole("tab", { name: "Inbox" })).toBeVisible();
+  await expect(page.getByRole("tab", { name: "Home" })).toBeVisible();
 
-  // A fresh board has no projects and no threads.
-  await expect(page.getByText("No projects yet.")).toBeVisible();
+  // A fresh board shows Welcome, not Home — no hero, no folders, no fixture.
+  await expect(hero(page)).toHaveCount(0);
   await expect(page.getByText(FLAGSHIP)).toHaveCount(0);
 });
 
 // ── 2 · Fixture board renders ─────────────────────────────────────────────
 
-test("a seeded board renders: flat list, key chips, both projects", async ({ page }) => {
+test("a seeded Home renders: hero, open folders, thread rows, for-you", async ({ page }) => {
   await seedFixture(page);
 
-  // No status grouping (statuses were removed 2026-07-11) — all four rows
-  // render in one flat, recency-ordered list.
+  // The hero tops the page; folders default open, so every row shows.
+  await expect(hero(page)).toBeVisible();
   await expect(page.getByText(SECOND_THREAD)).toBeVisible();
   await expect(page.getByText(BARE_THREAD)).toBeVisible();
 
-  // Inbox rows carry project key chips (inbox is cross-project).
-  await expect(page.getByText("ENG", { exact: true }).first()).toBeVisible();
-  await expect(page.getByText("ELN", { exact: true }).first()).toBeVisible();
+  // Rows carry KEY-N; both projects render as folders with counts.
+  await expect(page.getByText("ENG-1", { exact: true })).toBeVisible();
+  await expect(page.getByText("ELN-1", { exact: true })).toBeVisible();
+  await expect(folder(page, "Engram").getByText("3", { exact: true })).toBeVisible();
+  await expect(folder(page, "Nimbus").getByText("1", { exact: true })).toBeVisible();
 
-  // The flagship row, and both projects in the sidebar.
-  await expect(page.getByText(FLAGSHIP)).toBeVisible();
-  await expect(sidebar(page).getByText("Engram", { exact: true })).toBeVisible();
-  await expect(sidebar(page).getByText("Nimbus", { exact: true })).toBeVisible();
+  // The unanswered @user post surfaces in For you; Running now stays absent
+  // (conditional zones render only when they have something to say).
+  await expect(page.getByText("For you")).toBeVisible();
+  await expect(page.getByText("→ you")).toBeVisible();
+  await expect(page.getByText(/Two similarity metrics tie/)).toBeVisible();
+  await expect(page.getByText("Running now")).toHaveCount(0);
 });
 
 // ── 3 · Add a project (browser fallback) ─────────────────────────────────
@@ -290,16 +308,14 @@ test("Open a project… creates a project via the inline path input", async ({ p
   await expect(page.getByLabel("Agent handle").first()).toHaveValue("fable-5");
   await page.getByRole("button", { name: "Start working" }).click();
 
-  // …then the new project's empty board; name = folder basename.
-  await expect(page.locator("h1")).toHaveText("e2e-repo");
+  // …then Home: the new project's folder, open, with the designed empty
+  // state; name = folder basename; the hero invites the first thread.
+  await expect(hero(page)).toBeVisible();
+  await expect(folder(page, "e2e-repo")).toBeVisible();
   await expect(page.getByText("No threads yet")).toBeVisible();
-  await expect(page.getByRole("button", { name: "New thread", exact: true }).first()).toBeVisible();
-
-  // And the sidebar now lists it.
-  await expect(sidebar(page).getByText("e2e-repo", { exact: true })).toBeVisible();
 
   // Dismissal persists (elan.onboarding.roster.v1) — a reload goes straight
-  // to the board (selection resets to Inbox), the step never comes back.
+  // to Home, the step never comes back.
   await page.reload();
   await expect(page.getByText("No threads yet")).toBeVisible();
   await expect(page.getByRole("heading", { name: "Assemble your team" })).toHaveCount(0);
@@ -309,12 +325,9 @@ test("Open a project… creates a project via the inline path input", async ({ p
 
 test("draft: created on first keystroke, survives close; untouched draft discards", async ({ page }) => {
   await seedFixture(page);
-  await expect(page.locator("h1 + span")).toHaveText(FIXTURE_THREAD_COUNT);
 
-  // "New thread" opens a fresh selected tab with the ghost title focused.
-  // Two affordances share the name (the tab strip's + and the list header's);
-  // .first() is the tab strip's, which renders before the content pane.
-  await page.getByRole("button", { name: "New thread", exact: true }).first().click();
+  // The tab strip's + opens a fresh selected tab with the ghost title focused.
+  await page.getByRole("button", { name: "New thread", exact: true }).click();
   await expect(page.getByRole("tab")).toHaveCount(2);
   await expect(page.getByRole("tab", { name: /New thread/ })).toHaveAttribute(
     "aria-selected",
@@ -331,21 +344,54 @@ test("draft: created on first keystroke, survives close; untouched draft discard
   await expect(page.getByRole("heading", { name: "Activity" })).toBeVisible();
   await expect(composer(page)).toBeVisible();
 
-  // Close the tab via its ✕ — the thread survives and shows on the board.
+  // Close the tab via its ✕ — the thread survives and shows on Home, and
+  // the folder's count ticks up.
   await page.getByRole("button", { name: "Close Ship the e2e suite" }).click();
   await expect(page.getByRole("tab")).toHaveCount(1);
   await expect(page.getByText("Ship the e2e suite")).toBeVisible();
-  await expect(page.locator("h1 + span")).toHaveText("5");
+  await expect(folder(page, "Engram").getByText("4", { exact: true })).toBeVisible();
 
   // A second draft closed untouched is a discard — nothing new appears.
-  await page.getByRole("button", { name: "New thread", exact: true }).first().click();
+  await page.getByRole("button", { name: "New thread", exact: true }).click();
   await expect(page.getByPlaceholder("New thread")).toBeFocused();
   await page.getByRole("button", { name: "Close New thread" }).click();
   await expect(page.getByRole("tab")).toHaveCount(1);
-  await expect(page.locator("h1 + span")).toHaveText("5");
+  await expect(folder(page, "Engram").getByText("4", { exact: true })).toBeVisible();
 });
 
-// ── 5 · Tabs ──────────────────────────────────────────────────────────────
+// ── 5 · The hero ──────────────────────────────────────────────────────────
+
+test("hero: Enter files a seeded draft tab; answering clears For you", async ({ page }) => {
+  await seedFixture(page);
+
+  // Type into the hero, Enter — a draft tab opens with the title carried
+  // over and the thread already real (created on the draft's mount).
+  await hero(page).fill("Refactor the reducer fold");
+  await hero(page).press("Enter");
+  await expect(page.getByRole("tab")).toHaveCount(2);
+  await expect(page.getByPlaceholder("New thread")).toHaveValue("Refactor the reducer fold");
+  await expect(page.getByText("Engram › ENG-4")).toBeVisible();
+  await expect(composer(page)).toBeVisible();
+
+  // Back home: the hero cleared, the thread is on the board. (Scoped to the
+  // Projects zone — the title also lives in the still-open tab's label.)
+  await page.getByRole("tab", { name: "Home" }).click();
+  await expect(hero(page)).toHaveValue("");
+  await expect(
+    page.getByLabel("Projects").getByText("Refactor the reducer fold"),
+  ).toBeVisible();
+
+  // For you clears itself when you answer: open the asking thread, reply,
+  // return home — the zone is gone (no user post postdated the ask before).
+  await page.getByText(/Two similarity metrics tie/).click();
+  await expect(page.locator("h1")).toHaveText(SECOND_THREAD);
+  await composer(page).fill("Take cosine — ship it.");
+  await page.getByRole("button", { name: "Send" }).click();
+  await page.getByRole("tab", { name: "Home" }).click();
+  await expect(page.getByText("For you")).toHaveCount(0);
+});
+
+// ── 6 · Tabs ──────────────────────────────────────────────────────────────
 
 test("tabs: open, switch, Esc-close with fallback, restore across reload", async ({ page }) => {
   await seedFixture(page);
@@ -361,8 +407,8 @@ test("tabs: open, switch, Esc-close with fallback, restore across reload", async
   // The properties rail has no Status row — statuses are gone.
   await expect(page.getByText("Status", { exact: true })).toHaveCount(0);
 
-  // Open a second thread from the board tab → two thread tabs.
-  await page.getByRole("tab", { name: "Inbox" }).click();
+  // Open a second thread from Home → two thread tabs.
+  await page.getByRole("tab", { name: "Home" }).click();
   await openThread(page, BARE_THREAD);
   await expect(page.getByRole("tab")).toHaveCount(3);
 
@@ -387,7 +433,7 @@ test("tabs: open, switch, Esc-close with fallback, restore across reload", async
   await expect(page.locator("h1")).toHaveText(BARE_THREAD);
 });
 
-// ── 6 · Messaging ─────────────────────────────────────────────────────────
+// ── 7 · Messaging ─────────────────────────────────────────────────────────
 
 test("messaging: user bubble with no author name, @mention popover, tagged event", async ({ page }) => {
   await seedFixture(page);
@@ -425,7 +471,7 @@ test("messaging: user bubble with no author name, @mention popover, tagged event
   await expect(page.getByText(/tagged @fable-5/).first()).toBeVisible();
 });
 
-// ── 7 · Exchanges ─────────────────────────────────────────────────────────
+// ── 8 · Exchanges ─────────────────────────────────────────────────────────
 
 test("exchanges: resolved collapse row expands/collapses; reply lands in the rail", async ({ page }) => {
   await seedFixture(page);
@@ -463,19 +509,19 @@ test("exchanges: resolved collapse row expands/collapses; reply lands in the rai
   ).toBeVisible();
 });
 
-// ── 8 · Delete project ────────────────────────────────────────────────────
+// ── 9 · Delete project ────────────────────────────────────────────────────
 
-test("delete project: sidebar ⋯ → confirm → last project gone returns Welcome", async ({ page }) => {
+test("delete project: folder ⋯ → confirm → last project gone returns Welcome", async ({ page }) => {
   await page.getByRole("button", { name: "Open a project…" }).click();
   await page.getByPlaceholder("/path/to/repo").fill("/tmp/e2e-delete-me");
   await page.getByRole("button", { name: "Add", exact: true }).click();
 
   // First project ⇒ the roster onboarding step shows; click through it.
   await page.getByRole("button", { name: "Start working" }).click();
-  await expect(page.locator("h1")).toHaveText("e2e-delete-me");
+  await expect(folder(page, "e2e-delete-me")).toBeVisible();
 
-  // Hovering the sidebar row reveals the ⋯ button (coexists with "+").
-  const row = sidebar(page).getByText("e2e-delete-me", { exact: true });
+  // Hovering the folder row reveals the ⋯ button (coexists with "+").
+  const row = folder(page, "e2e-delete-me").getByText("e2e-delete-me", { exact: true });
   await row.hover();
   await page.getByRole("button", { name: "e2e-delete-me actions" }).click();
   await page.getByRole("menuitem", { name: "Delete project…" }).click();
@@ -487,7 +533,7 @@ test("delete project: sidebar ⋯ → confirm → last project gone returns Welc
   ).toBeVisible();
   await page.getByRole("button", { name: "Cancel", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Delete e2e-delete-me?" })).toHaveCount(0);
-  await expect(page.locator("h1")).toHaveText("e2e-delete-me");
+  await expect(folder(page, "e2e-delete-me")).toBeVisible();
 
   // For real this time: the last project goes, and the board falls back to
   // Welcome automatically (projects.length === 0) with no lingering tab.
@@ -497,7 +543,6 @@ test("delete project: sidebar ⋯ → confirm → last project gone returns Welc
   await page.getByRole("button", { name: "Delete", exact: true }).click();
 
   await expect(page.getByRole("button", { name: "Open a project…" })).toBeVisible();
-  await expect(page.getByText("No projects yet.")).toBeVisible();
   await expect(page.getByRole("tab")).toHaveCount(1);
-  await expect(page.getByRole("tab", { name: "Inbox" })).toBeVisible();
+  await expect(page.getByRole("tab", { name: "Home" })).toBeVisible();
 });

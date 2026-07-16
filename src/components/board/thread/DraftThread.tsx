@@ -26,12 +26,16 @@ import { ThreadComposer, type ComposerMode } from "./ThreadComposer";
 export function DraftThread({
   projectId,
   threadId,
+  initialTitle,
   onCreated,
 }: {
-  /** Project preselected at invocation (sidebar "+"); default: first project. */
+  /** Project preselected at invocation (a folder's "+"); default: first project. */
   projectId?: string;
   /** Set once the first keystroke created the thread. */
   threadId?: string;
+  /** Seeded from the home hero — the title already has its first keystrokes,
+   *  so the thread is created on mount instead of on first keystroke. */
+  initialTitle?: string;
   onCreated: (threadId: string) => void;
 }) {
   const board = useBoard();
@@ -43,7 +47,7 @@ export function DraftThread({
     (p) => p.id === (thread?.projectId ?? selectedProjectId),
   );
 
-  const [title, setTitle] = useState(thread?.title ?? "");
+  const [title, setTitle] = useState(thread?.title ?? initialTitle ?? "");
   const [body, setBody] = useState(thread?.body ?? "");
   const [mode, setMode] = useState<ComposerMode>({ kind: "comment" });
 
@@ -100,9 +104,30 @@ export function DraftThread({
     [board.events, threadId],
   );
 
+  // Hero-seeded draft: the title is already typed — mint the thread now,
+  // under the same rule as the first-keystroke path.
+  useEffect(() => {
+    if (!initialTitle?.trim() || threadIdRef.current || !selectedProjectId) return;
+    const created = boardStore().createThread({
+      projectId: selectedProjectId,
+      title: initialTitle,
+      body: "",
+    });
+    threadIdRef.current = created.id;
+    onCreated(created.id);
+    // Mount-only: the seed never changes after the tab opens.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const titleRef = useRef<HTMLTextAreaElement>(null);
   const bodyRef = useRef<HTMLTextAreaElement>(null);
-  useEffect(() => titleRef.current?.focus(), []);
+  useEffect(() => {
+    const el = titleRef.current;
+    if (!el) return;
+    el.focus();
+    // Caret lands after any seeded text, not before it.
+    el.setSelectionRange(el.value.length, el.value.length);
+  }, []);
 
   const autoGrow = (el: HTMLTextAreaElement | null) => {
     if (!el) return;

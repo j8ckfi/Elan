@@ -4,22 +4,14 @@ import {
   useEffect,
   useRef,
   useState,
-  type CSSProperties,
   type ReactNode,
 } from "react";
+import { IconSettings } from "@tabler/icons-react";
 import { IconProvider } from "@/lib/icon-context";
-import {
-  SidebarInset,
-  SidebarProvider,
-  SidebarTrigger,
-  useSidebar,
-} from "@/components/ui/sidebar";
 import { SettingsDialog } from "@/components/chat/SettingsDialog";
-import { useSettings } from "@/lib/settings";
-import { BoardSidebar } from "@/components/board/BoardSidebar";
 import { ConnectionBanner } from "@/components/board/ConnectionBanner";
 import { RosterEditor } from "@/components/board/RosterEditor";
-import { ThreadList } from "@/components/board/ThreadList";
+import { Home } from "@/components/board/Home";
 import { Welcome } from "@/components/board/Welcome";
 import { TabStrip, type TabDescriptor } from "@/components/board/TabStrip";
 import { ThreadView } from "@/components/board/thread/ThreadView";
@@ -28,20 +20,20 @@ import { useBoard, useBoardLoaded, boardStore } from "@/lib/board/useBoard";
 import { cn } from "@/lib/utils";
 
 // ── Navigation ───────────────────────────────────────────────────────────────
-// The sidebar drives the persistent board tab (list views); threads open as
-// closable tabs beside it. No router — a desktop app with two view shapes.
-export type Selection =
-  | { view: "inbox" }
-  | { view: "mine" }
-  | { view: "project"; projectId: string };
+// Fully tab-based (the sidebar was removed 2026-07-16): the persistent board
+// tab is Home — hero + for-you + running + project folders — and threads open
+// as closable tabs beside it. No router — a desktop app with two view shapes.
 
 // One open thread tab. Drafts start without a threadId; the first title
-// keystroke creates the thread and attaches it (see DraftThread).
+// keystroke creates the thread and attaches it (see DraftThread). A draft
+// filed from the home hero carries its typed title in draftInitialTitle and
+// is created on mount instead.
 interface OpenTab {
   key: string;
   threadId?: string;
   draft: boolean;
   draftProjectId?: string;
+  draftInitialTitle?: string;
 }
 
 const nextKey = () =>
@@ -75,18 +67,9 @@ function hydrateTabs(): { tabs: OpenTab[]; activeKey: string } {
 }
 
 function App() {
-  const settings = useSettings();
   const board = useBoard();
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [selection, setSelection] = useState<Selection>({ view: "inbox" });
   const [{ tabs, activeKey }, setTabState] = useState(hydrateTabs);
-
-  // Sidebar glass (inherited from Mari): pure CSS attribute toggle.
-  useEffect(() => {
-    document.documentElement.dataset.glass = settings.glassSidebar
-      ? "on"
-      : "off";
-  }, [settings.glassSidebar]);
 
   useEffect(() => {
     try {
@@ -136,12 +119,20 @@ function App() {
     });
   }, []);
 
-  const requestNewThread = useCallback((projectId?: string) => {
-    setTabState((prev) => {
-      const tab: OpenTab = { key: nextKey(), draft: true, draftProjectId: projectId };
-      return { tabs: [...prev.tabs, tab], activeKey: tab.key };
-    });
-  }, []);
+  const requestNewThread = useCallback(
+    (projectId?: string, initialTitle?: string) => {
+      setTabState((prev) => {
+        const tab: OpenTab = {
+          key: nextKey(),
+          draft: true,
+          draftProjectId: projectId,
+          draftInitialTitle: initialTitle,
+        };
+        return { tabs: [...prev.tabs, tab], activeKey: tab.key };
+      });
+    },
+    [],
+  );
 
   // A draft's first keystroke created the thread — attach it to the tab.
   const draftCreated = useCallback((key: string, threadId: string) => {
@@ -176,12 +167,6 @@ function App() {
     setTabState((prev) => ({ ...prev, activeKey: key }));
   }, []);
 
-  // Sidebar selection always fronts the board tab.
-  const selectView = useCallback((sel: Selection) => {
-    setSelection(sel);
-    setTabState((prev) => ({ ...prev, activeKey: "board" }));
-  }, []);
-
   // Esc closes the active thread tab (Linear's back, browser's close) —
   // unless focus is in a field, where Esc belongs to it (mention popover,
   // draft editors) and closing would risk losing a half-written message.
@@ -197,13 +182,26 @@ function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, [activeKey, settingsOpen, closeTab]);
 
-  const boardLabel =
-    selection.view === "inbox"
-      ? "Inbox"
-      : selection.view === "mine"
-        ? "My threads"
-        : (board.projects.find((p) => p.id === selection.projectId)?.name ??
-          "Project");
+  // ⌘N fronts Home and focuses the hero — filing is always one chord away.
+  // (The hero also autofocuses whenever Home mounts; the nonce covers the
+  // "already on Home, focus wandered" case.)
+  const [heroFocusNonce, setHeroFocusNonce] = useState(0);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (
+        e.key.toLowerCase() === "n" &&
+        (e.metaKey || e.ctrlKey) &&
+        !e.shiftKey &&
+        !e.altKey
+      ) {
+        e.preventDefault();
+        setTabState((prev) => ({ ...prev, activeKey: "board" }));
+        setHeroFocusNonce((n) => n + 1);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   const descriptors: TabDescriptor[] = tabs.map((t) => {
     const thread = board.threads.find((x) => x.id === t.threadId);
@@ -249,135 +247,103 @@ function App() {
       finishRosterOnboarding();
   }, [rosterOnboarding, rosterOnboarded, finishRosterOnboarding]);
 
-  // Drag-resizable sidebar width, persisted across launches.
-  const [sidebarWidth, setSidebarWidth] = useState(() => {
-    try {
-      const n = Number(localStorage.getItem("elan.sidebarWidth"));
-      return Number.isFinite(n) && n > 0 ? Math.min(460, Math.max(220, n)) : 244;
-    } catch {
-      return 244;
-    }
-  });
-  const handleResize = (w: number) => {
-    setSidebarWidth(w);
-    try {
-      localStorage.setItem("elan.sidebarWidth", String(w));
-    } catch {
-      /* storage disabled */
-    }
-  };
-
   return (
     <IconProvider defaultLibrary="tabler">
-      <SidebarProvider
-        style={{ "--sidebar-width": `${sidebarWidth}px` } as CSSProperties}
-      >
-        <TitleBar />
-        <BoardSidebar
-          selection={selection}
-          activeThreadId={activeTab?.threadId}
-          onSelect={selectView}
-          onOpenThread={openThread}
-          onNewThread={requestNewThread}
-          onResize={handleResize}
+      <div className="flex h-screen w-full min-w-0 flex-col bg-background text-foreground">
+        <TabRow
+          tabs={descriptors}
+          activeKey={activeKey}
+          onSelect={selectTab}
+          onClose={closeTab}
+          onNewThread={() => requestNewThread()}
           onOpenSettings={() => setSettingsOpen(true)}
         />
-        <SidebarInset className="flex h-screen min-w-0 flex-col bg-background text-foreground">
-          <TabRow
-            boardLabel={boardLabel}
-            tabs={descriptors}
-            activeKey={activeKey}
-            onSelect={selectTab}
-            onClose={closeTab}
-            onNewThread={() => requestNewThread()}
-          />
-          <ConnectionBanner />
-          <BoardBoundary resetKey={activeKey + selectionKey(selection)}>
-            {!activeTab ? (
-              board.projects.length === 0 ? (
-                <Welcome
-                  onProjectCreated={(id) =>
-                    selectView({ view: "project", projectId: id })
-                  }
-                />
-              ) : rosterOnboarding ? (
-                <RosterEditor
-                  variant="onboarding"
-                  onDone={finishRosterOnboarding}
-                />
-              ) : (
-                <ThreadList
-                  mode={selection.view}
-                  projectId={
-                    selection.view === "project" ? selection.projectId : undefined
-                  }
-                  onOpenThread={openThread}
-                  onNewThread={requestNewThread}
-                />
-              )
-            ) : activeTab.draft ? (
-              <DraftThread
-                key={activeTab.key}
-                projectId={activeTab.draftProjectId}
-                threadId={activeTab.threadId}
-                onCreated={(threadId) => draftCreated(activeTab.key, threadId)}
+        <ConnectionBanner />
+        <BoardBoundary resetKey={activeKey}>
+          {!activeTab ? (
+            board.projects.length === 0 ? (
+              // Home shows the new project itself (folders default open) —
+              // nothing to select anymore.
+              <Welcome onProjectCreated={() => {}} />
+            ) : rosterOnboarding ? (
+              <RosterEditor
+                variant="onboarding"
+                onDone={finishRosterOnboarding}
               />
             ) : (
-              <ThreadView threadId={activeTab.threadId!} />
-            )}
-          </BoardBoundary>
-        </SidebarInset>
-        <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
-      </SidebarProvider>
+              <Home
+                onOpenThread={openThread}
+                onNewThread={requestNewThread}
+                focusHeroNonce={heroFocusNonce}
+              />
+            )
+          ) : activeTab.draft ? (
+            <DraftThread
+              key={activeTab.key}
+              projectId={activeTab.draftProjectId}
+              threadId={activeTab.threadId}
+              initialTitle={activeTab.draftInitialTitle}
+              onCreated={(threadId) => draftCreated(activeTab.key, threadId)}
+            />
+          ) : (
+            <ThreadView threadId={activeTab.threadId!} />
+          )}
+        </BoardBoundary>
+      </div>
+      <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
     </IconProvider>
   );
 }
 
-const selectionKey = (s: Selection) =>
-  s.view === "project" ? `p:${s.projectId}` : s.view;
-
 // The tab row sits where a titlebar would: inline with the traffic lights,
-// draggable in its dead space, padded past the fixed toggle cluster when the
-// sidebar is collapsed.
+// draggable in its dead space. Its far right carries the settings gear — the
+// old sidebar footer's one survivor.
 function TabRow({
-  boardLabel,
   tabs,
   activeKey,
   onSelect,
   onClose,
   onNewThread,
+  onOpenSettings,
 }: {
-  boardLabel: string;
   tabs: TabDescriptor[];
   activeKey: string;
   onSelect: (key: string) => void;
   onClose: (key: string) => void;
   onNewThread: () => void;
+  onOpenSettings: () => void;
 }) {
-  const { state } = useSidebar();
-  const collapsed = state === "collapsed";
-  // Collapsed, the fixed cluster is one button wide (toggle only — the
-  // new-thread affordance lives with the tabs now).
-  const pl = collapsed ? trafficInset() + 36 : 12;
-
   return (
     <header
       data-tauri-drag-region="deep"
       className={cn(
-        // TITLE_BAR_H, shared with TitleBar so the toggle and the tabs sit on
-        // one center line (they were h-8 vs h-9 — a 2px offset).
-        "relative z-30 flex h-11 shrink-0 items-center pr-3 select-none",
+        // h-11: TITLE_BAR_H — the tabs and the traffic lights share one
+        // center line.
+        "relative z-30 flex h-11 shrink-0 items-center gap-1 pr-3 select-none",
       )}
-      style={{ paddingLeft: pl }}
+      style={{ paddingLeft: trafficInset() + 8 }}
     >
       <TabStrip
-        boardLabel={boardLabel}
         tabs={tabs}
         activeKey={activeKey}
         onSelect={onSelect}
         onClose={onClose}
         onNewThread={onNewThread}
       />
+      <span className="min-w-0 flex-1" aria-hidden />
+      <button
+        onClick={onOpenSettings}
+        aria-label="Settings"
+        title="Settings"
+        className={cn(
+          "flex size-7 shrink-0 items-center justify-center rounded-md",
+          "text-muted-foreground transition-[background-color,color,transform]",
+          "duration-100 ease-[cubic-bezier(0.23,1,0.32,1)]",
+          "hover:bg-hover hover:text-foreground active:scale-[0.96]",
+        )}
+      >
+        <IconSettings size={15} />
+      </button>
     </header>
   );
 }
@@ -415,30 +381,13 @@ class BoardBoundary extends Component<
   }
 }
 
-// The window's traffic-light inset in px (desktop only) — the room the
-// sidebar toggle leaves for the lights. Paired with X_NUDGE in
-// src-tauri/src/trafficlights.rs, which shifts the lights right by 5: without
-// the matching 5 here the toggle would sit that much closer to them.
+// The window's traffic-light inset in px (desktop only) — the room the tab
+// strip leaves for the lights. Paired with X_NUDGE in
+// src-tauri/src/trafficlights.rs, which shifts the lights right by 5.
 function trafficInset(): number {
   const isDesktop =
     typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
   return isDesktop ? 87 : 10;
-}
-
-// Fixed sidebar toggle pinned beside the traffic lights (inherited from Mari).
-// h-11 matches TabRow's header so the toggle, the traffic lights and the tabs
-// all share one center line. New-thread is NOT here: it's the browser-style +
-// after the last tab (see TabStrip).
-function TitleBar() {
-  return (
-    <div
-      data-tauri-drag-region="deep"
-      className="fixed left-0 top-0 z-50 flex h-11 items-center pr-2 select-none"
-      style={{ paddingLeft: trafficInset() }}
-    >
-      <SidebarTrigger className="size-7 shrink-0 rounded-md text-foreground/65 hover:bg-hover hover:text-foreground [&_svg]:size-[16px]" />
-    </div>
-  );
 }
 
 export default App;

@@ -58,15 +58,6 @@ export function SettingsDialog({
                 ]}
               />
             </Field>
-            <Field
-              label="Glass sidebar"
-              desc="Frost the sidebar with native macOS glass. Desktop app only."
-            >
-              <Toggle
-                checked={s.glassSidebar}
-                onChange={(v) => update({ glassSidebar: v })}
-              />
-            </Field>
           </Section>
 
           {/* ── Agents ──────────────────────────────────────────────── */}
@@ -252,29 +243,3 @@ function Segmented<T extends string>({
   );
 }
 
-function Toggle({
-  checked,
-  onChange,
-}: {
-  checked: boolean;
-  onChange: (v: boolean) => void;
-}) {
-  return (
-    <button
-      role="switch"
-      aria-checked={checked}
-      onClick={() => onChange(!checked)}
-      className={cn(
-        "relative h-5 w-9 rounded-full transition-colors",
-        checked ? "bg-foreground" : "bg-border",
-      )}
-    >
-      <span
-        className={cn(
-          "absolute top-0.5 left-0.5 h-4 w-4 rounded-full bg-background transition-transform",
-          checked && "translate-x-4",
-        )}
-      />
-    </button>
-  );
-}

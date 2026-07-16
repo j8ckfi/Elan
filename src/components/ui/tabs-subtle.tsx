@@ -261,10 +261,14 @@ interface TabsSubtleItemProps extends HTMLAttributes<HTMLButtonElement> {
    *  closed it instead.) Rendered as a span, not a nested button — keyboard
    *  close goes through Esc at the app level. */
   onClose?: () => void;
+  /** Elan extension: never expand the label, selected or not — the icon is
+   *  the whole tab (the board tab's home glyph). The label still names the
+   *  tab for accessibility. Requires an icon. */
+  iconOnly?: boolean;
 }
 
 const TabsSubtleItem = forwardRef<HTMLButtonElement, TabsSubtleItemProps>(
-  ({ icon: Icon, label, index, className, onClose, ...props }, ref) => {
+  ({ icon: Icon, label, index, className, onClose, iconOnly = false, ...props }, ref) => {
     const internalRef = useRef<HTMLButtonElement | null>(null);
     const shape = useShape();
     const { registerTab, hoveredIndex, selectedIndex, idPrefix, activeLabel } =
@@ -277,8 +281,8 @@ const TabsSubtleItem = forwardRef<HTMLButtonElement, TabsSubtleItemProps>(
 
     const isSelected = selectedIndex === index;
     const isActive = hoveredIndex === index || isSelected;
-    const collapseLabel = activeLabel && !!Icon;
-    const showLabel = !collapseLabel || isSelected;
+    const collapseLabel = (activeLabel || iconOnly) && !!Icon;
+    const showLabel = !collapseLabel || (isSelected && !iconOnly);
     const closeAfterLabel = !!onClose && isSelected;
 
     const closeGlyph = (

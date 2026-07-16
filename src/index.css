@@ -263,26 +263,6 @@
   }
 }
 
-/* ── Native sidebar glass ───────────────────────────────────────────────────
-   The window is transparent with a native macOS glass/vibrancy view mounted
-   behind the webview (see src-tauri/src/glass.rs). When the glass setting is on
-   we drop the web content's own backdrop so that surface shows through: the
-   page body goes transparent and the sidebar's `--sidebar` fill turns clear,
-   revealing the glass through the sidebar only (the content pane keeps its
-   opaque `--background`). Off → everything stays fully opaque, unchanged.
-   ────────────────────────────────────────────────────────────────────────── */
-:root[data-glass="on"] body {
-  background: transparent;
-}
-/* A light frost sits over the native glass so the refraction still reads
-   through while the sidebar content stays legible. */
-:root[data-glass="on"] {
-  --sidebar: oklch(1 0 0 / 0.6);
-}
-:root[data-glass="on"].dark {
-  --sidebar: oklch(0.21 0.006 285 / 0.34);
-}
-
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

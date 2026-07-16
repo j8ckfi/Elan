@@ -5,7 +5,7 @@
 // runs, the animated gradient while a session works the thread.
 
 import { useMemo } from "react";
-import { IconInbox, IconPlus } from "@tabler/icons-react";
+import { IconHome, IconPlus } from "@tabler/icons-react";
 import { GradientSpin } from "gradient-spin";
 import { TabsSubtle, TabsSubtleItem } from "@/components/ui/tabs-subtle";
 import type { IconComponentProps } from "@/lib/icon-map";
@@ -77,14 +77,12 @@ function threadIcon(running: boolean) {
 }
 
 export function TabStrip({
-  boardLabel,
   tabs,
   activeKey,
   onSelect,
   onClose,
   onNewThread,
 }: {
-  boardLabel: string;
   tabs: TabDescriptor[];
   /** "board" or a TabDescriptor key. */
   activeKey: string;
@@ -112,7 +110,9 @@ export function TabStrip({
         onSelect={(i) => onSelect(keys[i] ?? "board")}
         className="min-w-0"
       >
-        <TabsSubtleItem index={0} icon={IconInbox} label={boardLabel} />
+        {/* Icon-only, always: the house needs no caption. `label` still names
+            the tab for the accessibility tree. */}
+        <TabsSubtleItem index={0} icon={IconHome} label="Home" iconOnly />
         {tabs.map((t, i) => (
           <TabsSubtleItem
             key={t.key}

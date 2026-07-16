@@ -6,8 +6,8 @@
 
 **The reference is Linear.** For the content panel we are 1:1 copying
 Linear's issue view — layout, density, hierarchy, glyph vocabulary — until we
-have reason to diverge. The sidebar is ours (projects + threads, not Linear's
-sidebar). When unsure how something should look, the answer is "how does
+have reason to diverge. Home is ours (there is no sidebar — see "The
+layout"). When unsure how something should look, the answer is "how does
 Linear render this?", not invention.
 
 ## Inherited from Mari (keep, don't relitigate)
@@ -33,32 +33,39 @@ Linear is *dense*. Mari's chat was airy; Elan is not.
 
 - Base UI text: **13px/1.4**; secondary/meta: **12px**; thread title in the
   content panel: **21px semibold**; list rows: **13px**.
-- Row heights: sidebar items 30px, thread-list rows 36px, activity lines 28px.
+- Row heights: home folder rows 34px, thread rows 36px, activity lines 28px.
 - Paddings in 4px steps; content column max-width ~ **44rem**, properties
   rail fixed **280px**.
 - Font stack: keep Mari's (system/Inter-ish). No new fonts.
 
 ## The layout
 
+There is **no sidebar** (removed 2026-07-16 — it was a second copy of the
+board at worse density). The app is fully tab-based: the persistent board
+tab is **Home**, and home carries everything the rail did.
+
 ```
-┌──────────┬──────────────────────────────────────────────┐
-│ Sidebar  │ [ Inbox ][ ◔ tab ][ ⣿ tab ✕ ]   ← tab row    │
-│ 244px    ├───────────────────────────────┬──────────────┤
-│          │  Content panel                │ Properties   │
-│          │  (board tab: thread list;     │ rail 280px   │
-│          │   thread tab: thread view     │ (thread view │
-│          │   or draft page)              │  only)       │
-└──────────┴───────────────────────────────┴──────────────┘
+┌─────────────────────────────────────────────────────────┐
+│ ⬤⬤⬤  [ ⌂ Home ][ ◔ tab ][ ⣿ tab ✕ ] +          ⚙       │
+├─────────────────────────────────────┬───────────────────┤
+│  Content panel                      │ Properties        │
+│  (board tab: Home;                  │ rail 280px        │
+│   thread tab: thread view           │ (thread view      │
+│   or draft page)                    │  only)            │
+└─────────────────────────────────────┴───────────────────┘
 ```
 
 ### The tab row
 
 FF `TabsSubtle` in `activeLabel` mode (`src/components/board/TabStrip.tsx`),
-inline with the traffic lights (h-9, drag region in dead space):
+inline with the traffic lights (drag region in dead space; the strip owns the
+traffic-light inset now):
 
-- **One persistent board tab** (index 0, never closable, inbox icon). Its
-  label follows the sidebar selection (Inbox / My threads / project name);
-  clicking a sidebar item fronts it.
+- **One persistent board tab** (index 0, never closable): the home icon,
+  **icon-only even when selected** (`iconOnly` on TabsSubtleItem) — the
+  house needs no caption; "Home" stays its accessible name.
+- **The settings gear** rides the row's far right — the old sidebar
+  footer's one survivor.
 - **One tab per open thread.** Unselected tabs collapse to their icon; the
   selected tab expands its title (FF's animated label collapse).
 - **The tab icon is the working grid** — the brand's 3×3 matrix. Still and
@@ -77,8 +84,7 @@ inline with the traffic lights (h-9, drag region in dead space):
 ### First run (Welcome)
 
 A fresh board (`projects.length === 0`) never shows demo data — it shows
-**Welcome**, centered in the content pane (sidebar renders normally with
-"No projects yet" under Projects; tab row shows just the board tab):
+**Welcome**, centered in the content pane (tab row shows just the Home tab):
 
 ```
                     Elan
@@ -98,10 +104,9 @@ A fresh board (`projects.length === 0`) never shows demo data — it shows
 - **Open a project…** — primary button. Desktop: the Tauri folder picker
   (`@tauri-apps/plugin-dialog`, dynamic import — crib
   `ProjectBreadcrumb.tsx`); browser dev: swaps inline to a small path
-  input + Add. Creates the project (name = folder basename, key derived),
-  selects it, fronts the board tab: the empty thread list's "No threads
-  yet + New thread" takes it from there — the existing draft flow is the
-  rest of onboarding.
+  input + Add. Creates the project (name = folder basename, key derived);
+  Home shows the new folder open with "No threads yet" — the hero and the
+  existing draft flow are the rest of onboarding.
 - No demo button (the demo was removed from the product), no carousel, no
   tour, no checklists. The product teaches itself through
   the empty states; Welcome's only job is the first project or the demo.
@@ -166,32 +171,51 @@ telemetry exists — one byline, work and speech in one grammar (2026-07-11):
 - Local mode / logless session: the block yields to its fallback — the
   plain "started a session" event line.
 
-### Sidebar (ours, not Linear's)
+### Home (content panel, board tab)
 
-Top→bottom: an empty header strip (NO wordmark — the user knows what app
-they're in; it only keeps the traffic-light inset, handled as in Mari's
-App.tsx) · **Inbox** · **My threads** · a **Projects** section — each
-project expandable to its threads (title only, truncated) · footer:
-settings gear. Project rows are **text only** — no color swatches. Selected
-row: `bg-sidebar-accent` full-row pill (5px radius); hover: `--hover`.
-Section labels: 12px medium muted ("Projects"), like Linear — no ALL-CAPS.
-Clicking a thread opens/focuses its tab; clicking a project fronts the board
-tab.
+`src/components/board/Home.tsx` — the sketch-#4 mix (2026-07-16): four
+zones top→bottom, of which the middle two are **conditional** — they render
+only when non-empty, so a quiet board is hero + folders, never a screen of
+empty headers. "My threads" and view switching died with the sidebar;
+grouping is spatial (folders), not navigation.
 
-### Thread list (content panel, board tab)
+Everything sits in **one centered column** (max-w 52rem, 24px side
+padding) with exactly **two left edges**: the column edge (hero, zone
+labels) and +26px inside it (folder names, thread keys, "No threads yet",
+"New project…" — the chevron/+ occupies the 26px gutter). Rows hover as
+`-mx-2` rounded pills so their text stays on the column edge.
 
-Linear's issue list, 1:1:
-
-- Header row (below the tab row): view name + count, right side
-  "＋ New thread" button.
-- One flat list, recency-ordered (updatedAt desc) — **no status grouping**;
-  statuses do not exist in Elan (removed 2026-07-11: they confused agents,
-  and long-lived threads have no lifecycle).
-- Row anatomy, left→right: `KEY-N` in 12px muted mono-ish · title (13px,
-  truncates) · spacer · agent avatar stack (18px) · updated-at (12px
-  muted). **No priority** — priority does not exist either (the human
-  arbitrates; agents read policy files, not columns).
-- Whole row clickable → opens the thread's tab; hover `--hover`.
+- **The hero** — a perpetual draft title: ghost input, 21px semibold,
+  "What needs doing?", hint line under it (12px muted). Typing is filing:
+  Enter opens a draft tab seeded with the typed title (the thread is
+  created on the draft's mount — same rule as the first-keystroke path).
+  ⌘N fronts Home and focuses it; it also autofocuses whenever Home mounts.
+  The tab strip's ＋ stays as the mouse path.
+- **For you** (conditional) — per thread, the latest agent post addressing
+  `@user` with no user post after it (replying/resolving clears the item;
+  the zone empties itself as you answer). Row: the 2px foreground rail (the
+  ledger's one emphasis, carried over) · agent mark 14px · handle 13px
+  medium · "→ you" chip · body first line, truncated, muted · `KEY-N · 2m`
+  right. Click opens the thread's tab. Capped at 5, newest first.
+- **Running now** (conditional) — one bordered chip per running session:
+  agent mark · thread title in `.shimmer-run` · handle 12px muted. The
+  fleet glance the sidebar's shimmer rows used to give; monochrome — the
+  gradient stays tab-bar-only. Click opens the thread.
+- **Projects** — collapsible folders, default **open** (the persisted set
+  is the collapsed one, `elan.home.collapsed.v1`). Folder row (34px):
+  chevron · name 13px medium · count 11px muted · spacer · dimmed marks of
+  agents running inside · latest-activity time. A **closed** folder with
+  live work inside shimmers its name. Hover swaps the meta for ⋯ (Delete
+  project…, confirm-gated) and ＋ (new thread in project) — the sidebar's
+  affordances, rehomed. Thread rows nest under (36px, indented), Linear's
+  issue list otherwise unchanged: `KEY-N` 12px muted · title 13px
+  (truncates, `.shimmer-run` while running) · agent avatar stack 18px ·
+  updated-at 12px muted. Recency-ordered within a folder; folders order by
+  latest thread activity (the busy project floats up). **No status
+  grouping, no priority** — neither exists (removed 2026-07-10/11).
+- **"＋ New project…"** — the list's last row. Desktop: the Tauri folder
+  picker; browser dev: swaps inline to the path-input + Add (Welcome's
+  fallback grammar).
 
 ### New thread (draft page, Notion-style)
 
@@ -203,6 +227,8 @@ Linear's issue list, 1:1:
   Enter → body) · ghost description (13px, "Description…").
 - The thread is **created on the first title keystroke** and live-synced
   (debounced) after; closing the tab with an empty title discards it.
+  A draft seeded from the home hero arrives with its title typed — it is
+  created on mount instead, caret at the end of the seed.
 - Once real, the Activity section + composer fade in below (≤250ms,
   `--ease-out`) — the draft is just a thread you're still titling.
 
@@ -311,7 +337,7 @@ One grammar, two signals:
   now." It appears in exactly ONE place: the thread tab's icon slot, where
   the still grey grid ignites. Everywhere else, liveness is monochrome.
 - **`.shimmer-run`** / **`.shimmer-text`** on text = "this object contains
-  live work" (list rows, sidebar thread rows, the rail's Running chip,
+  live work" (home rows and folder names, the rail's Running chip,
   session-block headers, roster probing labels).
 - The running agent's avatar gets a 2px `--ring` outline. Waiting = hollow
   clock glyph · Done/Error = muted text. Never a pulsing dot, anywhere.

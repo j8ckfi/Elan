@@ -22,13 +22,10 @@ export type ThemePref = "system" | "light" | "dark";
 export interface Settings {
   /** Light/dark/system. `system` follows the OS, live. */
   theme: ThemePref;
-  /** Frost the sidebar with native macOS glass (desktop app only). */
-  glassSidebar: boolean;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
   theme: "system",
-  glassSidebar: false,
 };
 
 const STORAGE_KEY = "elan.settings";
@@ -45,10 +42,7 @@ function load(): Settings {
       parsed.theme && THEME_VALUES.includes(parsed.theme)
         ? parsed.theme
         : DEFAULT_SETTINGS.theme;
-    return {
-      theme,
-      glassSidebar: parsed.glassSidebar ?? DEFAULT_SETTINGS.glassSidebar,
-    };
+    return { theme };
   } catch {
     return { ...DEFAULT_SETTINGS };
   }
